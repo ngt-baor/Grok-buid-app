@@ -44,7 +44,7 @@ npm run dist:win     # → release/*.exe (Setup + Portable)
 | **Auth / CLI** | Login device-code in-app · cài/cập nhật CLI in-app · refresh token |
 | **Settings** | Theme · **UI vi/en** · always-approve · terminal ngoài · Chrome DevTools MCP (opt-in) · personalization |
 | **Harness** | Detect AGENTS/MEMORY · domains/runbooks · post-task checklist · privacy banner |
-| **Usage** | Credits (billing API) + token 5h/7d từ log CLI — **credits ≠ tokens** |
+| **Usage** | Credits (billing API) + token từ log CLI — **credits ≠ tokens** |
 | **Update** | Kiểm tra / tải từ GitHub Releases |
 
 ## Phím tắt
