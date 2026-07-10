@@ -1,6 +1,6 @@
 {
   "name": "grok-build-app",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "description": "Desktop shell for Grok Build — project picker, ACP chat, harness-aware UI",
   "main": "electron/main.cjs",
@@ -26,10 +26,11 @@
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "start": "cross-env NODE_ENV=production electron .",
     "preview": "npm run build && npm run start",
-    "icon:png": "npx --yes electron -e \"require('./electron/icon-png.cjs').ensurePngOnDisk(); process.exit(0)\"",
-    "pack": "npm run icon:png && npm run build && electron-builder --dir",
-    "dist": "npm run icon:png && npm run build && electron-builder",
-    "dist:win": "npm run icon:png && npm run build && electron-builder --win",
+    "icon:png": "electron ./scripts/ensure-icon-png.cjs || node ./scripts/generate-icon-png.mjs",
+    "pack": "npm run icon:png && npm run build && npx --no-install electron-builder --dir",
+    "dist": "npm run icon:png && npm run build && npx --no-install electron-builder",
+    "dist:win": "npm run icon:png && npm run build && npx --no-install electron-builder --win",
+    "postinstall": "node -e \"try{require('electron-builder/package.json');console.log('electron-builder ok')}catch(e){console.warn('electron-builder missing — run npm install')}\"",
     "release:push": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/push-clean.ps1",
     "fix:idb-bloat": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/fix-grok-indexeddb-bloat.ps1",
     "fix:idb-bloat:clean-only": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/fix-grok-indexeddb-bloat.ps1 -SkipRestart"

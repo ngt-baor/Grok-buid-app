@@ -1,7 +1,37 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Grok Build">
+  <!-- App icon: teal tile + white orbital mark (matches brand mark) -->
   <rect width="256" height="256" rx="48" fill="#4A6B70"/>
   <g transform="translate(28 28) scale(0.78125)" fill="#FFFFFF">
-    <path fill-rule="evenodd" d="M128 18c60.8 0 110 49.2 110 110s-49.2 110-110 110S18 188.8 18 128 67.2 18 128 18zm0 52c-32 0-58 26-58 58s26 58 58 58 58-26 58-58-26-58-58-58z"/>
-    <path d="M20 224c-4.5-4.5-5-12-0.5-17L207 19.5C212 15 219.5 15.5 224 20c4.5 4.5 5 12 0.5 17L37 224.5C32 229 24.5 228.5 20 224z"/>
+    <!-- Thick open ring -->
+    <path
+      fill-rule="evenodd"
+      d="
+        M128 18
+        c60.8 0 110 49.2 110 110
+        s-49.2 110 -110 110
+        S18 188.8 18 128
+        67.2 18 128 18
+        Z
+        M128 70
+        c-32 0 -58 26 -58 58
+        s26 58 58 58
+        58 -26 58 -58
+        -26 -58 -58 -58
+        Z
+      "
+    />
+    <!-- Needle blade SW → NE with soft taper -->
+    <path
+      d="
+        M 20 224
+        C 15.5 219.5 15 212 19.5 207
+        L 207 19.5
+        C 212 15 219.5 15.5 224 20
+        C 228.5 24.5 229 32 224.5 37
+        L 37 224.5
+        C 32 229 24.5 228.5 20 224
+        Z
+      "
+    />
   </g>
 </svg>

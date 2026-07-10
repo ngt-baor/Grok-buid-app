@@ -43,6 +43,10 @@ Harness-Engineering.txt
 _diag_*.js
 _diag_*.cjs
 _diag_*.ts
+scripts/_*.js
+scripts/_*.cjs
+scripts/_*.mjs
+scripts/_*.ts
 *.local.json
 settings.local.json
 
