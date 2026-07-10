@@ -1,5 +1,0 @@
-owner: ngt-baor
-repo: Grok-buid-app
-provider: github
-releaseType: release
-updaterCacheDirName: grok-build-app-updater
