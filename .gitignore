@@ -1,0 +1,64 @@
+# Dependencies & build
+node_modules/
+dist/
+dist-electron/
+release/
+out/
+*.log
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+auth.json
+**/auth.json
+
+# Editor
+.vscode/
+.idea/
+*.local
+*.swp
+*~
+
+# ── Personal / machine-local (DO NOT PUSH) ─────────────────────
+# Per-user harness is different on every machine — never ship yours
+AGENTS.md
+Agents.md
+AGENTS.local.md
+MEMORY.md
+MEMORY.local.md
+Harness-Engineering.txt
+.agents/
+.agent/
+.harness/
+.claude/
+.cursor/
+.codex/
+
+# Local diagnostics / one-off scripts with personal paths
+_diag_*.js
+_diag_*.cjs
+_diag_*.ts
+*.local.json
+settings.local.json
+
+# Grok / agent session junk if ever copied into repo
+.grok/
+sessions/
+prompt_context.json
+chat_history.jsonl
+events.jsonl
+system_prompt.txt
+
+# OS / packaging leftovers
+*.exe
+*.msi
+*.dmg
+*.AppImage
+*.blockmap
+latest.yml
+.cache/

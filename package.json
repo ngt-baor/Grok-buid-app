@@ -1,0 +1,110 @@
+{
+  "name": "grok-build-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop shell for Grok Build — project picker, ACP chat, harness-aware UI",
+  "main": "electron/main.cjs",
+  "productName": "Grok Build",
+  "type": "module",
+  "author": "ngt-baor",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ngt-baor/Grok-buid-app.git"
+  },
+  "homepage": "https://github.com/ngt-baor/Grok-buid-app",
+  "bugs": {
+    "url": "https://github.com/ngt-baor/Grok-buid-app/issues"
+  },
+  "grokBuild": {
+    "updateRepo": "ngt-baor/Grok-buid-app"
+  },
+  "scripts": {
+    "predev": "node ./scripts/copy-logo-pngs.mjs",
+    "prebuild": "node ./scripts/copy-logo-pngs.mjs",
+    "logos:copy": "node ./scripts/copy-logo-pngs.mjs",
+    "dev": "concurrently -k \"vite\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "start": "cross-env NODE_ENV=production electron .",
+    "preview": "npm run build && npm run start",
+    "icon:png": "npx --yes electron -e \"require('./electron/icon-png.cjs').ensurePngOnDisk(); process.exit(0)\"",
+    "pack": "npm run icon:png && npm run build && electron-builder --dir",
+    "dist": "npm run icon:png && npm run build && electron-builder",
+    "dist:win": "npm run icon:png && npm run build && electron-builder --win",
+    "release:push": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/push-clean.ps1",
+    "fix:idb-bloat": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/fix-grok-indexeddb-bloat.ps1",
+    "fix:idb-bloat:clean-only": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/fix-grok-indexeddb-bloat.ps1 -SkipRestart"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^35.2.1",
+    "electron-builder": "^26.0.12",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.3",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.ngtbaor.grokbuild",
+    "productName": "Grok Build",
+    "copyright": "Copyright © ngt-baor",
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "assets/**/*",
+      "package.json",
+      "!electron/**/*.map",
+      "!**/*.md",
+      "!**/AGENTS.md",
+      "!**/Agents.md",
+      "!**/.agents/**",
+      "!**/MEMORY.md",
+      "!**/Harness-Engineering.txt"
+    ],
+    "extraMetadata": {
+      "main": "electron/main.cjs"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Grok Build"
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ngt-baor",
+        "repo": "Grok-buid-app",
+        "releaseType": "release"
+      }
+    ]
+  }
+}
