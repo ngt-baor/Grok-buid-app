@@ -20,6 +20,7 @@ Repo đích: https://github.com/ngt-baor/Grok-buid-app
 - Source: `electron/`, `src/`, `public/`, `assets/` (icon/logo brand của app)
 - `package.json` (repo + `grokBuild.updateRepo = ngt-baor/Grok-buid-app`)
 - Docs công khai: `README.md`, `PROJECT.md`, `docs/*`
+- Project skills: `skills/*` (playbook Grok công khai — **không** nhầm với `.agents/` harness cá nhân)
 
 ## Cập nhật in-app
 
