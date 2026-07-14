@@ -33,7 +33,9 @@
     "postinstall": "node -e \"try{require('electron-builder/package.json');console.log('electron-builder ok')}catch(e){console.warn('electron-builder missing — run npm install')}\"",
     "release:push": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/push-clean.ps1",
     "fix:idb-bloat": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/fix-grok-indexeddb-bloat.ps1",
-    "fix:idb-bloat:clean-only": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/fix-grok-indexeddb-bloat.ps1 -SkipRestart"
+    "fix:idb-bloat:clean-only": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/fix-grok-indexeddb-bloat.ps1 -SkipRestart",
+    "smoke:ui": "node ./scripts/smoke-ui.cjs",
+    "release:checklist": "node ./scripts/release-checklist.cjs"
   },
   "dependencies": {
     "react": "^19.1.0",
@@ -105,6 +107,15 @@
         "owner": "ngt-baor",
         "repo": "Grok-buid-app",
         "releaseType": "release"
+      }
+    ],
+    "extraResources": [
+      {
+        "from": "skills",
+        "to": "skills",
+        "filter": [
+          "**/*"
+        ]
       }
     ]
   }

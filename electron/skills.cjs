@@ -53,6 +53,15 @@ function skillRoots(projectPath) {
       label: SOURCE_LABELS.bundled,
     });
   }
+
+  const resourcesPath = process.resourcesPath || "";
+  if (resourcesPath) {
+    roots.push({
+      root: path.join(resourcesPath, "skills"),
+      source: "bundled",
+      label: "App bundled",
+    });
+  }
   const proj = String(projectPath || "").trim();
   if (proj) {
     roots.push({
