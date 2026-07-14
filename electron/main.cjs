@@ -37,16 +37,22 @@ const {
   getUsageSnapshot,
   recordInferenceUsage,
   setContextWindow,
+  getContextSnapshot,
   beginTurnUsage,
   consumeTurnUsage,
   extractUsageFromPayload,
+  setLatestInferenceLoader,
 } = require("./usage.cjs");
 const {
   getProfileStats,
   recordTurnActivity,
   tokensSince,
+  latestInferenceFromLog,
   emptyProfileStats,
 } = require("./profile-stats.cjs");
+
+// Context chip fallback: when ACP never streams usage, read last inference from CLI logs.
+setLatestInferenceLoader(latestInferenceFromLog);
 const {
   listMemories,
   addMemory,
@@ -185,6 +191,47 @@ function hideNativeMenuBar(win) {
   }
 }
 
+const TITLEBAR_HEIGHT = 32;
+
+/** Colors for custom titlebar + Win titleBarOverlay (must match .app-titlebar). */
+function chromeThemeColors(theme) {
+  const light = theme === "light";
+  return {
+    color: light ? "#f4f4f5" : "#171717",
+    symbolColor: light ? "#3f3f46" : "#c5c5c5",
+  };
+}
+
+/**
+ * Sync Electron window chrome with renderer light/dark theme.
+ * Without this, Win caption strip stays dark while UI goes light (washed controls).
+ * @param {string} [theme]
+ */
+function applyChromeTheme(theme) {
+  const t = theme === "light" ? "light" : "dark";
+  const { color, symbolColor } = chromeThemeColors(t);
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    mainWindow.setBackgroundColor(color);
+  } catch {
+    /* ignore */
+  }
+  if (
+    process.platform === "win32" &&
+    typeof mainWindow.setTitleBarOverlay === "function"
+  ) {
+    try {
+      mainWindow.setTitleBarOverlay({
+        color,
+        symbolColor,
+        height: TITLEBAR_HEIGHT,
+      });
+    } catch {
+      /* ignore — older Electron */
+    }
+  }
+}
+
 function createWindow() {
   const icon = getAppIcon();
   try {
@@ -205,10 +252,14 @@ function createWindow() {
   //  - Menu.setApplicationMenu keeps accelerators; renderer labels popup via popupMenuAt
   const isMac = process.platform === "darwin";
   const isWin = process.platform === "win32";
-  // Match .app-titlebar --bg1 so overlay + custom bar look like one strip
-  const titlebarColor = "#171717";
-  const titlebarSymbol = "#c5c5c5";
-  const titlebarHeight = 32;
+  let bootTheme = "dark";
+  try {
+    bootTheme = loadSettings()?.theme === "light" ? "light" : "dark";
+  } catch {
+    /* ignore */
+  }
+  const { color: titlebarColor, symbolColor: titlebarSymbol } =
+    chromeThemeColors(bootTheme);
 
   /** @type {Electron.BrowserWindowConstructorOptions} */
   const winOpts = {
@@ -238,7 +289,7 @@ function createWindow() {
     winOpts.titleBarOverlay = {
       color: titlebarColor,
       symbolColor: titlebarSymbol,
-      height: titlebarHeight,
+      height: TITLEBAR_HEIGHT,
     };
   }
 
@@ -485,7 +536,20 @@ function registerIpc() {
     } catch {
       /* ignore */
     }
+    // Keep Win caption strip / window bg in sync when theme is saved
+    try {
+      if (partial && Object.prototype.hasOwnProperty.call(partial, "theme")) {
+        applyChromeTheme(next?.theme);
+      }
+    } catch {
+      /* ignore */
+    }
     return next;
+  });
+  /** Sync Electron titleBarOverlay + backgroundColor with renderer theme. */
+  ipcMain.handle("window:set-chrome-theme", (_e, theme) => {
+    applyChromeTheme(theme);
+    return { ok: true };
   });
   ipcMain.handle("auth:status", () => authStatus());
 
@@ -1069,11 +1133,39 @@ function registerIpc() {
     // Persist profile activity from multi-loop turn totals (main process — reliable).
     // If ACP never streamed usage, fall back to CLI unified.jsonl for this turn window.
     try {
+      // Log can lag a beat after prompt resolves — short wait improves hit rate.
+      await new Promise((r) => setTimeout(r, 250));
+      const fromLog = tokensSince(turnStartedAt);
+
+      // Context chip needs last prompt_tokens (window fill), not sum of burn.
+      // ACP often omits usage on text chunks → hydrate from CLI log.
+      const live = getContextSnapshot();
+      if (!(live.promptTokens > 0) && fromLog.lastPromptTokens > 0) {
+        send(
+          "usage:context",
+          recordInferenceUsage({
+            promptTokens: fromLog.lastPromptTokens,
+            completionTokens: fromLog.lastCompletionTokens,
+            reasoningTokens: fromLog.lastReasoningTokens,
+            cachedPromptTokens: fromLog.lastCachedPromptTokens,
+          })
+        );
+      } else if (!(live.promptTokens > 0) && fromLog.peakPromptTokens > 0) {
+        send(
+          "usage:context",
+          recordInferenceUsage({
+            promptTokens: fromLog.peakPromptTokens,
+            completionTokens: 0,
+            reasoningTokens: 0,
+            cachedPromptTokens: 0,
+          })
+        );
+      }
+
       const turn = consumeTurnUsage();
       let tokens = turn.totalTokens || 0;
       let durationMs = Math.max(0, Date.now() - turnStartedAt);
       if (tokens <= 0) {
-        const fromLog = tokensSince(turnStartedAt);
         tokens = fromLog.tokens || 0;
         if (fromLog.longestTaskMs > 0) {
           durationMs = Math.max(durationMs, fromLog.longestTaskMs);
@@ -1088,12 +1180,11 @@ function registerIpc() {
           at: turnStartedAt,
         });
       }
-      if (turn.context) {
-        send("usage:context", {
-          ...turn.context,
-          turnTotalTokens: tokens || turn.context.turnTotalTokens,
-        });
-      }
+      // Always push context snapshot after turn (chip + usage modal).
+      send("usage:context", {
+        ...getContextSnapshot(),
+        turnTotalTokens: tokens || turn.totalTokens || 0,
+      });
     } catch (err) {
       console.warn("[profile] record turn failed:", err?.message || err);
     }

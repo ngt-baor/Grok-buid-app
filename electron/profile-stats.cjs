@@ -168,6 +168,12 @@ function tokensSince(sinceMs) {
     peakTokens: 0,
     longestTaskMs: 0,
     logPath,
+    /** Last inference in window — used for context-window chip (prompt fill). */
+    lastPromptTokens: 0,
+    lastCompletionTokens: 0,
+    lastReasoningTokens: 0,
+    lastCachedPromptTokens: 0,
+    peakPromptTokens: 0,
   };
   if (!fs.existsSync(logPath) || !Number.isFinite(sinceMs)) return out;
   try {
@@ -203,10 +209,16 @@ function tokensSince(sinceMs) {
       const pt = Number(j.ctx.prompt_tokens) || 0;
       const ct = Number(j.ctx.completion_tokens) || 0;
       const rt = Number(j.ctx.reasoning_tokens) || 0;
+      const cached = Number(j.ctx.cached_prompt_tokens) || 0;
       const total = pt + ct + (rt > 0 && ct === 0 ? rt : 0);
       out.tokens += total;
       out.turns += 1;
       out.peakTokens = Math.max(out.peakTokens, total);
+      out.peakPromptTokens = Math.max(out.peakPromptTokens, pt);
+      out.lastPromptTokens = pt;
+      out.lastCompletionTokens = ct;
+      out.lastReasoningTokens = rt;
+      out.lastCachedPromptTokens = cached;
       const elapsed = Number(j.ctx.elapsed_since_turn_start_ms) || 0;
       if (elapsed > 0) out.longestTaskMs = Math.max(out.longestTaskMs, elapsed);
     }
@@ -214,6 +226,61 @@ function tokensSince(sinceMs) {
     console.warn("[profile-stats] tokensSince failed:", err?.message || err);
   }
   return out;
+}
+
+/**
+ * Most recent shell.turn.inference_done in unified.jsonl (any time).
+ * Fallback when ACP never streams usage — context chip needs prompt_tokens.
+ */
+function latestInferenceFromLog() {
+  const logPath = resolveLogPath();
+  if (!logPath || !fs.existsSync(logPath)) return null;
+  try {
+    const stat = fs.statSync(logPath);
+    const start = Math.max(0, stat.size - 2 * 1024 * 1024);
+    const len = stat.size - start;
+    if (len <= 0) return null;
+    const fd = fs.openSync(logPath, "r");
+    let text = "";
+    try {
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, start);
+      text = buf.toString("utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
+    const lines = text.split(/\r?\n/);
+    let last = null;
+    let i = start > 0 ? 1 : 0;
+    for (; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line || !line.includes("inference_done")) continue;
+      let j;
+      try {
+        j = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (j.msg !== "shell.turn.inference_done" || !j.ctx) continue;
+      const pt = Number(j.ctx.prompt_tokens) || 0;
+      const ct = Number(j.ctx.completion_tokens) || 0;
+      const rt = Number(j.ctx.reasoning_tokens) || 0;
+      const cached = Number(j.ctx.cached_prompt_tokens) || 0;
+      if (pt <= 0 && ct <= 0 && rt <= 0) continue;
+      last = {
+        promptTokens: pt,
+        completionTokens: ct,
+        reasoningTokens: rt,
+        cachedPromptTokens: cached,
+        updatedAt: j.ts || new Date().toISOString(),
+        source: "unified.jsonl",
+      };
+    }
+    return last;
+  } catch (err) {
+    console.warn("[profile-stats] latestInferenceFromLog failed:", err?.message || err);
+    return null;
+  }
 }
 
 /**
@@ -720,4 +787,5 @@ module.exports = {
   warmActivityFromLogs,
   resolveLogPath,
   tokensSince,
+  latestInferenceFromLog,
 };

@@ -6,13 +6,12 @@ const { nativeImage } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 
-/** Fallback mark — teal tile + white orbital slash (matches brand). */
+/** Fallback mark — black tile + official Grok spiral (matches brand). */
 const SVG_MARK = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
-  <rect width="256" height="256" rx="48" fill="#4A6B70"/>
-  <g transform="translate(28 28) scale(0.78125)" fill="#FFFFFF">
-    <path fill-rule="evenodd" d="M128 18c60.8 0 110 49.2 110 110s-49.2 110-110 110S18 188.8 18 128 67.2 18 128 18zm0 52c-32 0-58 26-58 58s26 58 58 58 58-26 58-58-26-58-58-58z"/>
-    <path d="M20 224c-4.5-4.5-5-12-0.5-17L207 19.5C212 15 219.5 15.5 224 20c4.5 4.5 5 12 0.5 17L37 224.5C32 229 24.5 228.5 20 224z"/>
+  <rect width="256" height="256" rx="48" fill="#0A0A0A"/>
+  <g transform="translate(36 36) scale(7.6666667)" fill="#FFFFFF" fill-rule="evenodd">
+    <path d="M9.27 15.29l7.978-5.897c.391-.29.95-.177 1.137.272.98 2.369.542 5.215-1.41 7.169-1.951 1.954-4.667 2.382-7.149 1.406l-2.711 1.257c3.889 2.661 8.611 2.003 11.562-.953 2.341-2.344 3.066-5.539 2.388-8.42l.006.007c-.983-4.232.242-5.924 2.75-9.383.06-.082.12-.164.179-.248l-3.301 3.305v-.01L9.267 15.292M7.623 16.723c-2.792-2.67-2.31-6.801.071-9.184 1.761-1.763 4.647-2.483 7.166-1.425l2.705-1.25a7.808 7.808 0 00-1.829-1A8.975 8.975 0 005.984 5.83c-2.533 2.536-3.33 6.436-1.962 9.764 1.022 2.487-.653 4.246-2.34 6.022-.599.63-1.199 1.259-1.682 1.925l7.62-6.815"/>
   </g>
 </svg>`;
 
@@ -22,11 +21,12 @@ function svgToNativeImage(svg) {
 }
 
 function resolveIconPath() {
+  // Prefer SVG brand mark (official Grok spiral) over older PNG/ICO caches.
   const candidates = [
-    path.join(__dirname, "..", "assets", "icon.ico"),
-    path.join(__dirname, "..", "assets", "icon.png"),
     path.join(__dirname, "..", "assets", "icon.svg"),
     path.join(__dirname, "..", "public", "icon.svg"),
+    path.join(__dirname, "..", "assets", "icon.ico"),
+    path.join(__dirname, "..", "assets", "icon.png"),
   ];
   for (const p of candidates) {
     if (fs.existsSync(p)) return p;
@@ -61,7 +61,9 @@ function getAppIcon() {
  * @returns {string | null}
  */
 function ensurePngOnDisk() {
-  const out = path.join(__dirname, "..", "assets", "icon.png");
+  const root = path.join(__dirname, "..");
+  const out = path.join(root, "assets", "icon.png");
+  const publicOut = path.join(root, "public", "icon.png");
   try {
     const img = getAppIcon();
     if (!img || img.isEmpty()) return null;
@@ -70,6 +72,8 @@ function ensurePngOnDisk() {
     if (!png || !png.length) return null;
     fs.mkdirSync(path.dirname(out), { recursive: true });
     fs.writeFileSync(out, png);
+    fs.mkdirSync(path.dirname(publicOut), { recursive: true });
+    fs.writeFileSync(publicOut, png);
     return out;
   } catch {
     return null;

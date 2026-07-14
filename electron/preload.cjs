@@ -3,6 +3,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("grokApp", {
   getSettings: () => ipcRenderer.invoke("settings:get"),
   saveSettings: (partial) => ipcRenderer.invoke("settings:save", partial),
+  /** Sync Win titleBarOverlay + window background with light/dark theme. */
+  setChromeTheme: (theme) => ipcRenderer.invoke("window:set-chrome-theme", theme),
   getAppVersion: () => ipcRenderer.invoke("app:get-version"),
   checkForUpdates: () => ipcRenderer.invoke("update:check"),
   downloadUpdate: (asset) => ipcRenderer.invoke("update:download", asset),

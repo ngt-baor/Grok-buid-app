@@ -23,7 +23,9 @@ description: >
 | **Credits** | `GET /v1/billing` (`monthlyLimit` / period) | Build billing period (usually monthly) |
 | **Tokens** | `~\.grok\logs\` (+ local activity) | Inference volume (not official quota) |
 
-Never label credits as tokens or vice versa. Prefer **weekly remaining %** on the chip; show both bars in the usage modal.
+Never label credits as tokens or vice versa. Prefer **weekly remaining %** on the quota chip.
+
+**Context absolute (client request):** sidebar footer + usage modal show `used / limit` like `2.9K / 500K` from `usage.context` (promptTokens / contextWindow). Not billing. Warn at ≥65% used, crit at ≥85%. Credits modal row may also show absolute used/limit when API provides numbers.
 
 ## Debug checklist
 

@@ -334,12 +334,34 @@ function contextLabel(
   if (standalonePath && pathsEqual(p, standalonePath)) return standaloneLabel;
   return projectName(p);
 }
+/** Compact absolute count — matches client style: 2.9K / 500K */
 function formatNum(n: number | null | undefined) {
   if (n == null || Number.isNaN(n)) return "—";
-  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (Math.abs(n) >= 10_000) return `${Math.round(n / 1000)}k`;
-  if (Math.abs(n) >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (abs >= 10_000) return `${Math.round(n / 1000)}K`;
+  if (abs >= 1000) return `${(n / 1000).toFixed(1)}K`;
   return String(Math.round(n));
+}
+
+/** Absolute used/limit for context & credits (e.g. "2.9K / 500K"). */
+function formatUsedLimit(
+  used: number | null | undefined,
+  limit: number | null | undefined
+): string | null {
+  if (used == null || Number.isNaN(used)) return null;
+  if (limit == null || !Number.isFinite(limit) || limit <= 0) {
+    return formatNum(used);
+  }
+  return `${formatNum(used)} / ${formatNum(limit)}`;
+}
+
+/** used% → warn class for context chip (near full = bad). */
+function usedPctTone(usedPct: number | null | undefined): "" | "mid" | "low" {
+  if (usedPct == null || Number.isNaN(usedPct)) return "";
+  if (usedPct >= 85) return "low";
+  if (usedPct >= 65) return "mid";
+  return "";
 }
 
 /** Compact stroke icons for sidebar footer / chrome */
@@ -546,9 +568,273 @@ function extractToolCallId(update: any): string | undefined {
   return String(id);
 }
 
+/** ACP often uses call-<uuid>[-n] as title when name is missing. */
+function looksLikeToolCallId(s: string): boolean {
+  const t = (s || "").trim();
+  if (!t) return true;
+  if (/^call-[0-9a-f-]{8,}/i.test(t)) return true;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(t))
+    return true;
+  // Long opaque ids (no spaces, mostly hex / uuid-ish)
+  if (t.length >= 28 && !/\s/.test(t) && /^[0-9a-z._:-]+$/i.test(t)) return true;
+  return false;
+}
+
+/** Known tool ids → short Vietnamese labels (not snake_case dumps). */
+const TOOL_FRIENDLY: Record<string, string> = {
+  read_file: "Đọc file",
+  write: "Ghi file",
+  write_file: "Ghi file",
+  search_replace: "Sửa file",
+  apply_patch: "Áp patch",
+  str_replace: "Sửa file",
+  edit: "Sửa file",
+  run_terminal_command: "Chạy lệnh",
+  bash: "Chạy lệnh",
+  shell: "Chạy lệnh",
+  execute: "Chạy lệnh",
+  grep: "Tìm trong code",
+  ripgrep: "Tìm trong code",
+  codebase_search: "Tìm trong code",
+  glob: "Tìm file",
+  glob_file_search: "Tìm file",
+  list_dir: "Liệt kê thư mục",
+  list_directory: "Liệt kê thư mục",
+  web_search: "Tìm web",
+  web_fetch: "Mở trang web",
+  open_page: "Mở trang web",
+  browse_page: "Mở trang web",
+  todo_write: "Cập nhật todo",
+  todo_read: "Xem todo",
+  image_gen: "Tạo ảnh",
+  image_edit: "Sửa ảnh",
+  spawn_subagent: "Gọi subagent",
+  task: "Gọi subagent",
+  switch_mode: "Đổi chế độ",
+  ask_user_question: "Hỏi người dùng",
+  delete_file: "Xóa file",
+  git: "Git",
+  mcp: "MCP",
+};
+
+function normalizeToolKey(s: string): string {
+  return (s || "")
+    .trim()
+    .replace(/^mcp__/i, "")
+    .replace(/^functions?\./i, "")
+    .replace(/[^a-zA-Z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+}
+
+/** snake_case / camelCase / mcp__x → readable words (fallback). */
+function prettifyToolId(raw: string): string {
+  const t = (raw || "").trim();
+  if (!t) return "Thao tác";
+  const key = normalizeToolKey(t);
+  if (TOOL_FRIENDLY[key]) return TOOL_FRIENDLY[key];
+  // Drop common prefixes that look like namespaces
+  let body = t.replace(/^mcp__/i, "").replace(/^functions?\./i, "");
+  if (body.includes("__")) body = body.split("__").pop() || body;
+  // camelCase → spaces, snake → spaces
+  body = body
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_./:-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!body || looksLikeToolCallId(body)) return "Thao tác";
+  // Title-case first letter only; keep short
+  const pretty = body.charAt(0).toUpperCase() + body.slice(1);
+  return pretty.length > 40 ? `${pretty.slice(0, 38)}…` : pretty;
+}
+
+function basenamePath(p: string): string {
+  const base = p.replace(/\\/g, "/").split("/").filter(Boolean).pop() || p;
+  return base.length > 40 ? `${base.slice(0, 38)}…` : base;
+}
+
+function clipLabel(s: string, max = 48): string {
+  const t = (s || "").replace(/\s+/g, " ").trim();
+  if (!t) return "";
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+}
+
+/** Pull a human label from tool input/detail JSON when title is a raw call id. */
+function toolLabelFromDetail(detail?: string): string | undefined {
+  if (!detail) return undefined;
+  const s = detail.trim();
+  if (!s) return undefined;
+  try {
+    const j = JSON.parse(s) as Record<string, unknown>;
+    const pick = (v: unknown) =>
+      typeof v === "string" && v.trim() && !looksLikeToolCallId(v) ? v.trim() : undefined;
+    // Prefer action-looking names first, then path/cmd for context
+    for (const k of ["toolName", "name", "title", "function", "method"]) {
+      const v = pick(j[k]);
+      if (v) {
+        const mapped = TOOL_FRIENDLY[normalizeToolKey(v)];
+        if (mapped) return mapped;
+        if (!looksLikeToolCallId(v) && !/^[a-z0-9_.-]+$/i.test(v)) return clipLabel(v, 48);
+        return prettifyToolId(v);
+      }
+    }
+    const cmd = pick(j.command) || pick(j.cmd);
+    if (cmd) {
+      const first = cmd.split(/\s+/)[0] || cmd;
+      return `Lệnh · ${clipLabel(first, 32)}`;
+    }
+    for (const k of ["path", "file", "target_file", "file_path", "target_directory"]) {
+      const v = pick(j[k]);
+      if (v) return `File · ${basenamePath(v)}`;
+    }
+    const q = pick(j.query) || pick(j.pattern) || pick(j.glob);
+    if (q) return `Tìm · ${clipLabel(q, 36)}`;
+    const nested =
+      (j.toolCall as Record<string, unknown> | undefined) ||
+      (j.function as Record<string, unknown> | undefined);
+    if (nested) {
+      const n = pick(nested.name) || pick(nested.title);
+      if (n) return prettifyToolId(n);
+    }
+  } catch {
+    /* not JSON — try free text */
+  }
+  const line = s
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .find((l) => l && !looksLikeToolCallId(l) && !l.startsWith("{") && !l.startsWith("["));
+  if (line) return clipLabel(line, 48);
+  return undefined;
+}
+
+/**
+ * Short side-text on collapsed tool row — never dump raw JSON.
+ * Prefer path / command / query; fall back empty.
+ */
+function toolPreviewLine(detail?: string): string {
+  if (!detail) return "";
+  const s = detail.trim();
+  if (!s) return "";
+  try {
+    const j = JSON.parse(s) as Record<string, unknown>;
+    const str = (k: string) =>
+      typeof j[k] === "string" && (j[k] as string).trim()
+        ? (j[k] as string).trim()
+        : "";
+    const cmd = str("command") || str("cmd");
+    if (cmd) return clipLabel(cmd, 64);
+    const path =
+      str("path") ||
+      str("file") ||
+      str("target_file") ||
+      str("file_path") ||
+      str("target_directory");
+    if (path) return clipLabel(path.replace(/\\/g, "/"), 64);
+    const q = str("query") || str("pattern") || str("glob") || str("content");
+    if (q) return clipLabel(q, 64);
+    // Last resort: first string value that isn't an id
+    for (const v of Object.values(j)) {
+      if (typeof v === "string" && v.trim() && !looksLikeToolCallId(v) && v.length < 200) {
+        return clipLabel(v, 64);
+      }
+    }
+    return "";
+  } catch {
+    /* free text */
+  }
+  if (s.startsWith("{") || s.startsWith("[")) return "";
+  return clipLabel(s.replace(/\s+/g, " "), 64);
+}
+
+function humanizeToolTitle(rawTitle: string, detail?: string): string {
+  const t = (rawTitle || "").trim() || "tool";
+  if (looksLikeToolCallId(t) || t.toLowerCase() === "tool") {
+    const fromDetail = toolLabelFromDetail(detail);
+    if (fromDetail) return fromDetail;
+    return "Thao tác";
+  }
+  const key = normalizeToolKey(t);
+  const base =
+    TOOL_FRIENDLY[key] ||
+    (/^[a-zA-Z][a-zA-Z0-9_.-]*$/.test(t) &&
+    (t.includes("_") || t.includes(".") || t.includes("-"))
+      ? prettifyToolId(t)
+      : "");
+  if (base) {
+    // Add path/cmd/query context when we have detail — not a second technical dump
+    if (detail) {
+      const fromDetail = toolLabelFromDetail(detail);
+      if (
+        fromDetail &&
+        /^(File|Lệnh|Tìm) · /.test(fromDetail)
+      ) {
+        const ctx = fromDetail.replace(/^(File|Lệnh|Tìm) · /, "");
+        if (ctx && !base.includes(ctx)) {
+          return clipLabel(`${base} · ${ctx}`, 52);
+        }
+      }
+    }
+    return base;
+  }
+  return clipLabel(t, 52);
+}
+
+/** ACP status strings → short Vietnamese for the tool row. */
+function formatToolStatus(status: string): string {
+  const s = (status || "").trim().toLowerCase().replace(/[_-]+/g, " ");
+  if (!s) return "";
+  if (/pending|queued|waiting/.test(s)) return "chờ";
+  if (/running|in progress|started|active|streaming/.test(s)) return "đang chạy";
+  if (/success|completed|complete|done|ok|finished/.test(s)) return "xong";
+  if (/fail|error|denied|rejected/.test(s)) return "lỗi";
+  if (/cancel|abort|stop/.test(s)) return "đã hủy";
+  // Unknown opaque status — don't show raw English
+  if (/^[a-z0-9 ]+$/i.test(s) && s.length <= 16) return s;
+  return "";
+}
+
+/**
+ * Flatten markdown to a short plain-text skim line for turn-report "Tóm tắt".
+ * Keeps meaning; drops ** / headers / table pipes so it doesn't look like source.
+ */
+function plainTextPreview(md: string, maxLen = 180): string {
+  let s = (md || "").replace(/\r\n/g, "\n");
+  // Fenced code → short marker
+  s = s.replace(/```[\w-]*\n?[\s\S]*?```/g, " [code] ");
+  // Inline code
+  s = s.replace(/`([^`]+)`/g, "$1");
+  // Images / links
+  s = s.replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1");
+  s = s.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  // Headings / emphasis / strike
+  s = s.replace(/^#{1,6}\s+/gm, "");
+  s = s.replace(/(\*\*|__)(.*?)\1/g, "$2");
+  s = s.replace(/(\*|_)(.*?)\1/g, "$2");
+  s = s.replace(/~~(.*?)~~/g, "$1");
+  // GFM tables → drop separator rows, collapse cells
+  s = s
+    .split("\n")
+    .filter((line) => !/^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(line))
+    .map((line) => {
+      if (line.includes("|")) {
+        return line
+          .split("|")
+          .map((c) => c.trim())
+          .filter(Boolean)
+          .join(" · ");
+      }
+      return line;
+    })
+    .join(" ");
+  s = s.replace(/\s+/g, " ").trim();
+  if (!s) return "";
+  if (s.length > maxLen) return `${s.slice(0, maxLen).trimEnd()}…`;
+  return s;
+}
+
 function formatTool(update: any) {
   const toolCallId = extractToolCallId(update);
-  const title =
+  const rawTitle =
     update?.title ||
     update?.toolName ||
     update?.name ||
@@ -583,7 +869,7 @@ function formatTool(update: any) {
   }
   return {
     toolCallId,
-    title: String(title),
+    title: humanizeToolTitle(String(rawTitle), detail),
     status: String(status),
     detail,
   };
@@ -602,11 +888,22 @@ function upsertToolItem(
       const cur = prev[idx];
       if (cur.kind !== "tool") return prev;
       const next = [...prev];
+      const mergedDetail =
+        tool.detail != null && tool.detail !== "" ? tool.detail : cur.detail;
+      // Prefer human label over raw call-id / generic "tool"
+      const incoming = (tool.title || "").trim();
+      const prevTitle = (cur.title || "").trim();
+      let title = prevTitle || "tool";
+      if (incoming && !looksLikeToolCallId(incoming) && incoming !== "tool") {
+        title = incoming;
+      } else if (looksLikeToolCallId(prevTitle) || !prevTitle || prevTitle === "tool") {
+        title = humanizeToolTitle(incoming || prevTitle, mergedDetail);
+      }
       next[idx] = {
         ...cur,
-        title: tool.title && tool.title !== "tool" ? tool.title : cur.title,
+        title,
         status: tool.status || cur.status,
-        detail: tool.detail != null && tool.detail !== "" ? tool.detail : cur.detail,
+        detail: mergedDetail,
         ts,
       };
       return next;
@@ -656,19 +953,75 @@ function isToolFailed(status: string) {
   return /fail|error|denied|cancel/i.test(status || "");
 }
 
-/** Codex-style usage row: title + remaining % only (no raw token spam). */
+/**
+ * Usage row: remaining % + optional absolute used/limit (client: "2.9K / 500K").
+ * Bar fills remaining % when remPct given; otherwise used % of limit.
+ */
 function UsageLimitRow({
   title,
   remPct,
+  used,
+  limit,
+  absoluteLabel,
   hint,
+  fillMode = "remaining",
 }: {
   title: string;
-  remPct: number | null;
+  remPct?: number | null;
+  used?: number | null;
+  limit?: number | null;
+  /** Override absolute text (e.g. already formatted). */
+  absoluteLabel?: string | null;
   hint?: string;
+  /** "remaining" = bar shows room left; "used" = bar shows consumption toward limit. */
+  fillMode?: "remaining" | "used";
 }) {
-  const pct = remPct == null || Number.isNaN(remPct) ? null : Math.max(0, Math.min(100, remPct));
+  const rem =
+    remPct == null || Number.isNaN(remPct) ? null : Math.max(0, Math.min(100, remPct));
+  let usedPct: number | null = null;
+  if (rem != null) {
+    usedPct = Math.max(0, Math.min(100, 100 - rem));
+  } else if (limit != null && limit > 0 && used != null && Number.isFinite(used)) {
+    usedPct = Math.max(0, Math.min(100, (used / limit) * 100));
+  }
+
+  const barPct =
+    fillMode === "used"
+      ? usedPct
+      : rem != null
+        ? rem
+        : usedPct != null
+          ? Math.max(0, 100 - usedPct)
+          : null;
+
   const fillClass =
-    pct == null ? "" : pct < 15 ? "crit" : pct < 35 ? "warn" : "";
+    usedPct == null
+      ? ""
+      : usedPct >= 85
+        ? "crit"
+        : usedPct >= 65
+          ? "warn"
+          : "";
+
+  const abs =
+    absoluteLabel ??
+    (limit != null && limit > 0 && used != null
+      ? formatUsedLimit(used, limit)
+      : used != null
+        ? formatNum(used)
+        : null);
+
+  const rightLabel =
+    rem != null
+      ? abs
+        ? `${abs} · Còn ${rem.toFixed(0)}%`
+        : `Còn ${rem.toFixed(0)}%`
+      : abs
+        ? usedPct != null
+          ? `${abs} · ${usedPct.toFixed(0)}%`
+          : abs
+        : "—";
+
   return (
     <div className="usage-card">
       <div className="head">
@@ -676,12 +1029,14 @@ function UsageLimitRow({
           <span className="title">{title}</span>
           {hint ? <span className="sub">{hint}</span> : null}
         </div>
-        <span className="pct">{pct == null ? "—" : `Còn ${pct.toFixed(0)}%`}</span>
+        <span className="pct" title={rightLabel}>
+          {rightLabel}
+        </span>
       </div>
       <div className="bar">
         <div
           className={`fill ${fillClass}`}
-          style={{ width: `${pct == null ? 0 : pct}%` }}
+          style={{ width: `${barPct == null ? 0 : barPct}%` }}
         />
       </div>
     </div>
@@ -805,17 +1160,28 @@ function buildTurnReportItem(
   const lastAssistant = assistants[assistants.length - 1];
   const toolFail = tools.filter((t) => isToolFailed(t.status)).length;
   const toolOk = Math.max(0, tools.length - toolFail);
-  const toolTitles: string[] = [];
+  /**
+   * Aggregate by action type (not per-file path) so the summary stays scannable:
+   * "Đọc file ×3 · Chạy lệnh ×2" instead of 5 path-long lines.
+   */
+  const titleCounts = new Map<string, number>();
   for (const t of tools) {
-    const title = (t.title || "tool").trim() || "tool";
-    if (!toolTitles.includes(title)) toolTitles.push(title);
+    const title = humanizeToolTitle((t.title || "tool").trim() || "tool");
+    // Strip any leftover " · context" if title was already enriched in storage
+    const base = title.split(" · ")[0]?.trim() || title;
+    if (!base || base === "Thao tác") continue;
+    titleCounts.set(base, (titleCounts.get(base) || 0) + 1);
+  }
+  const toolTitles: string[] = [];
+  for (const [name, n] of titleCounts) {
+    toolTitles.push(n > 1 ? `${name} ×${n}` : name);
+    if (toolTitles.length >= 8) break;
   }
   let assistantPreview: string | undefined;
   if (lastAssistant?.text) {
-    const flat = lastAssistant.text.replace(/\s+/g, " ").trim();
-    if (flat && !isNoiseChatText(flat)) {
-      assistantPreview =
-        flat.length > 240 ? `${flat.slice(0, 240)}…` : flat;
+    const plain = plainTextPreview(lastAssistant.text, 180);
+    if (plain && !isNoiseChatText(plain)) {
+      assistantPreview = plain;
     }
   }
   return {
@@ -826,7 +1192,7 @@ function buildTurnReportItem(
     toolCount: tools.length,
     toolOk,
     toolFail,
-    toolTitles: toolTitles.slice(0, 14),
+    toolTitles,
     thoughtCount: thoughts.length,
     assistantPreview,
     runId: runId || undefined,
@@ -848,7 +1214,7 @@ function turnReportNotifyBody(report: TurnReportItem): string {
   const parts: string[] = [];
   if (report.toolCount > 0) {
     parts.push(
-      `${report.toolCount} tool` +
+      `${report.toolCount} thao tác` +
         (report.toolFail ? ` · ${report.toolFail} lỗi` : "")
     );
   }
@@ -857,7 +1223,7 @@ function turnReportNotifyBody(report: TurnReportItem): string {
   } else if (report.assistantPreview) {
     parts.push(report.assistantPreview.slice(0, 120));
   } else {
-    parts.push("Không có tool call");
+    parts.push("Không dùng tool");
   }
   return parts.join(" — ");
 }
@@ -1401,6 +1767,17 @@ export function App() {
   const [checklistOpen, setChecklistOpen] = useState(false);
   const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
   const [checklistChecked, setChecklistChecked] = useState<Record<string, boolean>>({});
+  /** In-app confirm (replaces native window.confirm for recent-project remove). */
+  const [removeRecentConfirm, setRemoveRecentConfirm] = useState<string | null>(null);
+  /** In-app confirm before closing a chat tab (replaces native window.confirm). */
+  const [closeTabConfirm, setCloseTabConfirm] = useState<{
+    tabId: string;
+    title: string;
+    running: boolean;
+    projectPath: string;
+    /** active = current workspace; standalone-list = close Tác vụ while viewing a project */
+    mode: "active" | "standalone-list";
+  } | null>(null);
   const [sessionAlwaysApprove, setSessionAlwaysApprove] = useState(false);
   const [verifyTier, setVerifyTier] = useState<string | null>(null);
   const [privacyDismissed, setPrivacyDismissed] = useState(false);
@@ -2312,6 +2689,8 @@ export function App() {
     const t = theme === "light" ? "light" : "dark";
     document.documentElement.classList.toggle("theme-light", t === "light");
     document.documentElement.dataset.theme = t;
+    // Keep Electron titleBarOverlay / window chrome in sync (Win caption strip).
+    void window.grokApp.setChromeTheme?.(t);
   }, []);
 
   const applyProject = useCallback(
@@ -3110,19 +3489,8 @@ export function App() {
         void refreshStorage();
       }),
       window.grokApp.on("usage:context", (d: any) => {
-        // Don't interrupt live stream with usage chrome re-renders.
-        if (busyRef.current) {
-          usageRef.current = usageRef.current
-            ? { ...usageRef.current, context: d }
-            : {
-                weeklyQuota: null,
-                credits: null,
-                fiveHour: null,
-                week: null,
-                context: d,
-              };
-          return;
-        }
+        // Always apply context snapshot — chip is tiny; suppressing while busy left
+        // the footer stuck on "— / —" until a later refresh that often never came.
         setUsage((prev) => {
           const next = prev
             ? { ...prev, context: d }
@@ -3427,6 +3795,16 @@ export function App() {
           closeImageLightbox();
           return;
         }
+        if (removeRecentConfirm) {
+          e.preventDefault();
+          setRemoveRecentConfirm(null);
+          return;
+        }
+        if (closeTabConfirm) {
+          e.preventDefault();
+          setCloseTabConfirm(null);
+          return;
+        }
         setPaletteOpen(false);
         setChecklistOpen(false);
       }
@@ -3446,7 +3824,7 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectPath, summaryPinned, imageLightbox, closeImageLightbox, nudgeLightboxZoom]);
+  }, [projectPath, summaryPinned, imageLightbox, closeImageLightbox, nudgeLightboxZoom, removeRecentConfirm, closeTabConfirm]);
 
   const openFolder = async () => {
     const result = await window.grokApp.pickProject();
@@ -3514,16 +3892,13 @@ export function App() {
       push({ id: uid(), kind: "error", text: String(err?.message || err) });
     }
   };
-  const removeRecent = async (p: string, e: React.MouseEvent) => {
+  const removeRecent = (p: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const name = projectName(p);
-    const ok = window.confirm(
-      `Gỡ project “${name}” khỏi danh sách gần đây?\n\n` +
-        `• Không xóa folder trên đĩa\n` +
-        `• Lịch sử chat trong app vẫn giữ trong %APPDATA%\n\n` +
-        `Path: ${p}`
-    );
-    if (!ok) return;
+    setRemoveRecentConfirm(p);
+  };
+
+  const executeRemoveRecent = async (p: string) => {
+    setRemoveRecentConfirm(null);
     try {
       const removingBusy =
         busyRef.current &&
@@ -3812,25 +4187,56 @@ export function App() {
     }
   };
 
-  const onCloseTab = async (tabId: string, e: React.MouseEvent) => {
+  const onCloseTab = (tabId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const path = projectRef.current || projectPath;
     if (!path) return;
 
     const onBusyProject = pathsEqual(busyProjectPathRef.current, path);
-
-    // Closing the tab that owns a running turn → must cancel
-    if (
-      busyRef.current &&
+    const title =
+      storeRef.current?.tabs.find((t) => t.id === tabId)?.title || "Chat";
+    const isOwnerRunning =
+      !!busyRef.current &&
       onBusyProject &&
-      tabId === boundTabIdRef.current
-    ) {
-      const title =
-        storeRef.current?.tabs.find((t) => t.id === tabId)?.title || "Chat";
-      const ok = window.confirm(
-        `“${title}” đang chạy agent.\n\nDừng agent và đóng tab này?`
-      );
-      if (!ok) return;
+      tabId === boundTabIdRef.current;
+
+    // Always confirm before delete — in-app modal (no native window.confirm).
+    setCloseTabConfirm({
+      tabId,
+      title,
+      running: isOwnerRunning,
+      projectPath: path,
+      mode: "active",
+    });
+  };
+
+  const executeCloseTab = async () => {
+    const conf = closeTabConfirm;
+    if (!conf) return;
+    setCloseTabConfirm(null);
+
+    const { tabId, running, projectPath: path, mode } = conf;
+
+    // Closing a Tác vụ from the sidebar while viewing a project (no context switch).
+    if (mode === "standalone-list") {
+      if (running) {
+        await cancelBusyTurn("đóng tab đang chạy");
+      }
+      try {
+        const next = await window.grokApp.closeTab(path, tabId);
+        setStandaloneStore(next);
+        if (projectRef.current && pathsEqual(projectRef.current, path)) {
+          setStore(next);
+          storeRef.current = next;
+        }
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+
+    const onBusyProject = pathsEqual(busyProjectPathRef.current, path);
+    if (running) {
       await cancelBusyTurn("đóng tab đang chạy");
     }
 
@@ -4537,10 +4943,31 @@ export function App() {
   }, [auth]);
 
   const ctx = usage?.context;
+  const ctxUsed = ctx?.promptTokens ?? 0;
+  const ctxWindow = ctx?.contextWindow ?? 500_000;
+  const ctxUsedPct =
+    ctx && Number.isFinite(ctx.usedPercent)
+      ? ctx.usedPercent
+      : ctxWindow > 0
+        ? Math.min(100, (ctxUsed / ctxWindow) * 100)
+        : null;
+  /** Client style: "2.9K / 500K" — always show window so threshold is visible. */
+  const ctxAbs = formatUsedLimit(
+    ctx != null ? ctxUsed : null,
+    ctx != null ? ctxWindow : null
+  );
+  // Show 0 / limit once usage snapshot exists; "— / —" only before first getUsage.
   const ctxLabel =
-    ctx && ctx.promptTokens
-      ? `ctx ${formatNum(ctx.promptTokens)}/${formatNum(ctx.contextWindow)} (${ctx.usedPercent.toFixed(0)}%)`
-      : "ctx —";
+    ctxAbs ||
+    (ctx != null ? formatUsedLimit(0, ctxWindow) || "0 / 500K" : "— / —");
+  const ctxTone = usedPctTone(ctxUsedPct);
+  const ctxTitle = ctx
+    ? `Ngữ cảnh: ${formatNum(ctxUsed)} / ${formatNum(ctxWindow)} tokens` +
+      (ctxUsedPct != null ? ` (${ctxUsedPct.toFixed(0)}% đã dùng)` : "") +
+      (ctxUsed > 0
+        ? " — prompt tokens turn gần nhất / cửa sổ model"
+        : " — chạy 1 turn (Bắt đầu + gửi) để lấy số thật từ log CLI")
+    : "Ngữ cảnh (đang tải… hoặc chưa có dữ liệu usage)";
 
   const isStandaloneMode = Boolean(
     projectPath && standalonePath && pathsEqual(projectPath, standalonePath)
@@ -4702,7 +5129,7 @@ export function App() {
     weeklyPct != null
       ? `${weeklyPct.toFixed(0)}% tuần`
       : creditPct != null
-        ? `${creditPct.toFixed(0)}% credits`
+        ? `${creditPct.toFixed(0)}% tháng`
         : "Usage";
 
   const titleMenus: { key: "file" | "edit" | "view" | "help"; label: string }[] = [
@@ -5014,20 +5441,26 @@ export function App() {
                   className="session-x"
                   onClick={(e) => {
                     e.stopPropagation();
-                    void (async () => {
-                      if (isStandaloneMode) {
-                        await onCloseTab(t.id, e);
-                        return;
-                      }
-                      // Closing a Tác vụ while viewing a project — no context switch.
-                      if (!standalonePath) return;
-                      try {
-                        const next = await window.grokApp.closeTab(standalonePath, t.id);
-                        setStandaloneStore(next);
-                      } catch {
-                        /* ignore */
-                      }
-                    })();
+                    if (isStandaloneMode) {
+                      onCloseTab(t.id, e);
+                      return;
+                    }
+                    // Closing a Tác vụ while viewing a project — no context switch.
+                    if (!standalonePath) return;
+                    const title = t.title || "Hỏi đáp";
+                    const tabRunning =
+                      !!busyRef.current &&
+                      busyTabId != null &&
+                      t.id === busyTabId &&
+                      !!busyProjectPathRef.current &&
+                      pathsEqual(busyProjectPathRef.current, standalonePath);
+                    setCloseTabConfirm({
+                      tabId: t.id,
+                      title,
+                      running: tabRunning,
+                      projectPath: standalonePath,
+                      mode: "standalone-list",
+                    });
                   }}
                   role="button"
                   tabIndex={0}
@@ -5091,11 +5524,11 @@ export function App() {
                   }`}
                   title={
                     weeklyPct != null && creditPct != null
-                      ? `SuperGrok tuần còn ${weeklyPct.toFixed(0)}% · Credits còn ${creditPct.toFixed(0)}%`
+                      ? `Tuần còn ${weeklyPct.toFixed(0)}% · Tháng còn ${creditPct.toFixed(0)}%`
                       : weeklyPct != null
-                        ? `SuperGrok tuần còn ${weeklyPct.toFixed(0)}%`
+                        ? `Tuần còn ${weeklyPct.toFixed(0)}%`
                         : creditPct != null
-                          ? `Credits còn ${creditPct.toFixed(0)}%`
+                          ? `Tháng còn ${creditPct.toFixed(0)}%`
                           : "Mức sử dụng"
                   }
                 >
@@ -5105,7 +5538,12 @@ export function App() {
                 <span className="usage-sep" aria-hidden>
                   ·
                 </span>
-                <span className="ctx-chip">{ctxLabel}</span>
+                <span
+                  className={`ctx-chip footer-ctx ${ctxTone}`}
+                  title={ctxTitle}
+                >
+                  {ctxLabel}
+                </span>
               </small>
             </span>
           </button>
@@ -5528,14 +5966,24 @@ export function App() {
                                           : "ok"
                                     }`}
                                   />
-                                  <span className="tool-title">{it.title}</span>
-                                  <span className="tool-status">{it.status}</span>
-                                  {it.detail && !it.expanded && (
-                                    <span className="tool-preview">
-                                      {it.detail.replace(/\s+/g, " ").slice(0, 72)}
-                                      {it.detail.length > 72 ? "…" : ""}
-                                    </span>
-                                  )}
+                                  <span className="tool-title">
+                                    {humanizeToolTitle(it.title, it.detail)}
+                                  </span>
+                                  {(() => {
+                                    const st = formatToolStatus(it.status);
+                                    return st ? (
+                                      <span className="tool-status">{st}</span>
+                                    ) : null;
+                                  })()}
+                                  {!it.expanded &&
+                                    (() => {
+                                      const prev = toolPreviewLine(it.detail);
+                                      return prev ? (
+                                        <span className="tool-preview" title={prev}>
+                                          {prev}
+                                        </span>
+                                      ) : null;
+                                    })()}
                                 </button>
                                 {it.expanded && it.detail && (
                                   <div className="body tool-detail">{it.detail}</div>
@@ -5679,12 +6127,38 @@ export function App() {
                 const headline = turnReportHeadline(it.status, it.durationMs);
                 const metaBits: string[] = [];
                 if (it.toolCount > 0) {
-                  metaBits.push(`${it.toolCount} tool`);
-                  if (it.toolFail) metaBits.push(`${it.toolFail} lỗi`);
+                  metaBits.push(
+                    it.toolCount === 1 ? "1 thao tác" : `${it.toolCount} thao tác`
+                  );
+                  if (it.toolFail) {
+                    metaBits.push(
+                      it.toolFail === 1 ? "1 lỗi" : `${it.toolFail} lỗi`
+                    );
+                  }
                 } else {
-                  metaBits.push("Không có tool");
+                  metaBits.push("Không dùng tool");
                 }
-                if (it.thoughtCount) metaBits.push(`${it.thoughtCount} suy nghĩ`);
+                // Re-humanize stored labels (old sessions may still have snake_case / call-ids)
+                const usefulToolLines = it.toolTitles
+                  .map((raw) => {
+                    const m = raw.match(/^(.*?)(\s*×\d+)?$/);
+                    const base = (m?.[1] || raw).trim();
+                    const mult = m?.[2] || "";
+                    if (!base || looksLikeToolCallId(base)) return "";
+                    const label = humanizeToolTitle(base);
+                    if (!label || label.toLowerCase() === "tool" || label === "Thao tác")
+                      return "";
+                    return `${label}${mult}`;
+                  })
+                  .filter(Boolean);
+                // Dedupe after humanize (read_file + Read File → same chip)
+                const chipSeen = new Set<string>();
+                const chips: string[] = [];
+                for (const line of usefulToolLines) {
+                  if (chipSeen.has(line)) continue;
+                  chipSeen.add(line);
+                  chips.push(line);
+                }
                 return (
                   <div
                     className={`turn-report ${it.status}`}
@@ -5694,23 +6168,27 @@ export function App() {
                   >
                     <div className="turn-report-head">
                       <span className="turn-report-icon" aria-hidden>
-                        {it.status === "done" ? "✓" : it.status === "cancelled" ? "■" : "!"}
+                        {it.status === "done"
+                          ? "✓"
+                          : it.status === "cancelled"
+                            ? "■"
+                            : "!"}
                       </span>
-                      <strong className="turn-report-title">{headline}</strong>
-                      <span className="turn-report-meta">{metaBits.join(" · ")}</span>
+                      <div className="turn-report-titles">
+                        <strong className="turn-report-title">{headline}</strong>
+                        <span className="turn-report-meta">
+                          {metaBits.join(" · ")}
+                        </span>
+                      </div>
                     </div>
-                    {it.toolTitles.length > 0 && (
-                      <ul className="turn-report-tools">
-                        {it.toolTitles.map((title) => (
-                          <li key={title}>{title}</li>
+                    {chips.length > 0 && (
+                      <div className="turn-report-chips" aria-label="Thao tác đã dùng">
+                        {chips.map((title) => (
+                          <span className="turn-report-chip" key={title}>
+                            {title}
+                          </span>
                         ))}
-                      </ul>
-                    )}
-                    {it.assistantPreview && (
-                      <p className="turn-report-preview" title={it.assistantPreview}>
-                        <span className="turn-report-preview-label">Tóm tắt</span>
-                        {it.assistantPreview}
-                      </p>
+                      </div>
                     )}
                   </div>
                 );
@@ -5728,6 +6206,8 @@ export function App() {
               // Fallback for any remaining kinds
               const it = block.item;
               if (it.kind === "tool") {
+                const st = formatToolStatus(it.status);
+                const prev = !it.expanded ? toolPreviewLine(it.detail) : "";
                 return (
                   <div
                     className={`bubble tool ${isToolRunning(it.status) ? "tool-running" : ""} ${
@@ -5743,8 +6223,15 @@ export function App() {
                       <span className="tool-chevron" aria-hidden>
                         {it.expanded ? "▾" : "▸"}
                       </span>
-                      <span className="tool-title">{it.title}</span>
-                      <span className="tool-status">{it.status}</span>
+                      <span className="tool-title">
+                        {humanizeToolTitle(it.title, it.detail)}
+                      </span>
+                      {st ? <span className="tool-status">{st}</span> : null}
+                      {prev ? (
+                        <span className="tool-preview" title={prev}>
+                          {prev}
+                        </span>
+                      ) : null}
                     </button>
                     {it.expanded && it.detail && (
                       <div className="body tool-detail">{it.detail}</div>
@@ -6621,7 +7108,7 @@ export function App() {
             </div>
             <div className="usage-modal-grid">
               <UsageLimitRow
-                title="Giới hạn SuperGrok tuần"
+                title="Giới hạn tuần"
                 remPct={remainingPctFromWindow(usage?.weeklyQuota)}
                 hint={
                   formatUsageReset(usage?.weeklyQuota?.periodEnd) ||
@@ -6631,18 +7118,37 @@ export function App() {
                 }
               />
               <UsageLimitRow
-                title="Giới hạn credits"
+                title="Giới hạn tháng"
                 remPct={remainingPctFromWindow(usage?.credits)}
+                used={usage?.credits?.used}
+                limit={
+                  usage?.credits?.limit != null && usage.credits.limit > 0
+                    ? usage.credits.limit
+                    : null
+                }
                 hint={
                   formatUsageReset(usage?.credits?.periodEnd) ||
                   (usage?.errors?.billing ? "Không lấy được billing" : "Kỳ billing Build (thường tháng)")
                 }
               />
+              <UsageLimitRow
+                title="Ngữ cảnh (context window)"
+                remPct={
+                  ctxUsedPct != null
+                    ? Math.max(0, Math.min(100, 100 - ctxUsedPct))
+                    : null
+                }
+                used={ctx ? ctxUsed : null}
+                limit={ctx ? ctxWindow : null}
+                absoluteLabel={ctxAbs}
+                fillMode="used"
+                hint={
+                  ctx
+                    ? "Prompt tokens turn gần nhất / cửa sổ model — biết khi nào gần đầy ngữ cảnh"
+                    : "Chạy một turn để cập nhật số token ngữ cảnh"
+                }
+              />
             </div>
-            <p className="usage-modal-note hint">
-              Hết pool tuần → Build/web có thể bị chặn dù credits tháng vẫn còn. Credits là budget
-              Build riêng; tuần SuperGrok là gate chính.
-            </p>
             <div className="usage-modal-foot">
               <span className="hint">
                 {usage?.fetchedAt
@@ -7688,7 +8194,7 @@ export function App() {
                       <div>
                         <strong>Báo cáo cuối phiên</strong>
                         <p>
-                          Sau mỗi lượt agent: thẻ “Đã chạy xong” + thời gian, danh sách tool, tóm tắt
+                          Sau mỗi lượt agent: thẻ “Đã chạy xong” + thời gian + chip thao tác
                           ngắn.
                         </p>
                       </div>
@@ -7949,6 +8455,115 @@ export function App() {
             </div>
           </div>
         )}
+
+      {removeRecentConfirm && (
+        <div
+          className="modal-backdrop center"
+          onClick={() => setRemoveRecentConfirm(null)}
+        >
+          <div
+            className="modal update-modal confirm-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="remove-recent-title"
+          >
+            <div className="modal-head">
+              <h3 id="remove-recent-title">Gỡ khỏi danh sách gần đây</h3>
+              <button
+                type="button"
+                className="ghost icon"
+                onClick={() => setRemoveRecentConfirm(null)}
+                aria-label="Đóng"
+              >
+                ×
+              </button>
+            </div>
+            <p className="update-prompt">
+              Gỡ project “{projectName(removeRecentConfirm)}” khỏi danh sách gần đây?
+            </p>
+            <ul className="confirm-list">
+              <li>Không xóa folder trên đĩa</li>
+              <li>Lịch sử chat trong app vẫn giữ trong %APPDATA%</li>
+            </ul>
+            <p className="confirm-path" title={removeRecentConfirm}>
+              <span className="confirm-path-label">Path</span>
+              <code>{removeRecentConfirm}</code>
+            </p>
+            <div className="actions">
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => setRemoveRecentConfirm(null)}
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => void executeRemoveRecent(removeRecentConfirm)}
+              >
+                Gỡ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {closeTabConfirm && (
+        <div
+          className="modal-backdrop center"
+          onClick={() => setCloseTabConfirm(null)}
+        >
+          <div
+            className="modal update-modal confirm-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="close-tab-title"
+          >
+            <div className="modal-head">
+              <h3 id="close-tab-title">
+                {closeTabConfirm.running ? "Dừng và xóa chat" : "Xóa chat"}
+              </h3>
+              <button
+                type="button"
+                className="ghost icon"
+                onClick={() => setCloseTabConfirm(null)}
+                aria-label="Đóng"
+              >
+                ×
+              </button>
+            </div>
+            <p className="update-prompt">
+              {closeTabConfirm.running
+                ? `“${closeTabConfirm.title}” đang chạy agent. Dừng agent và xóa tab này?`
+                : `Xóa chat “${closeTabConfirm.title}”?`}
+            </p>
+            <ul className="confirm-list">
+              {closeTabConfirm.running && <li>Agent trên tab này sẽ bị dừng ngay</li>}
+              <li>Lịch sử tin nhắn trong tab này sẽ mất</li>
+              <li>Hành động không hoàn tác được</li>
+            </ul>
+            <div className="actions">
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => setCloseTabConfirm(null)}
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => void executeCloseTab()}
+              >
+                {closeTabConfirm.running ? "Dừng và xóa" : "Xóa"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {loginModal && (
         <div

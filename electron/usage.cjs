@@ -252,7 +252,15 @@ let lastContext = {
   cachedPromptTokens: 0,
   contextWindow: 500000,
   updatedAt: null,
+  source: null,
 };
+
+/** Optional hook: latest inference from ~/.grok/logs (set by main to avoid circular require). */
+let latestInferenceLoader = null;
+
+function setLatestInferenceLoader(fn) {
+  latestInferenceLoader = typeof fn === "function" ? fn : null;
+}
 
 /** Sum of inference tokens within the current agent turn (multi-loop). */
 let turnAccum = {
@@ -290,6 +298,7 @@ function recordInferenceUsage(usage) {
     reasoningTokens: rt,
     cachedPromptTokens: cached,
     updatedAt: new Date().toISOString(),
+    source: "acp",
   };
   // Accumulate every inference loop so profile tokens reflect the full turn
   turnAccum.promptTokens += pt;
@@ -300,7 +309,32 @@ function recordInferenceUsage(usage) {
   return getContextSnapshot();
 }
 
+/**
+ * Prefer live ACP usage; if never received, hydrate once from CLI unified.jsonl
+ * so the sidebar chip shows real "2.9K / 500K" after turns (or on app open).
+ */
+function hydrateContextFromLogIfNeeded() {
+  if ((lastContext.promptTokens || 0) > 0) return;
+  if (!latestInferenceLoader) return;
+  try {
+    const fromLog = latestInferenceLoader();
+    if (!fromLog || !(fromLog.promptTokens > 0)) return;
+    lastContext = {
+      ...lastContext,
+      promptTokens: fromLog.promptTokens || 0,
+      completionTokens: fromLog.completionTokens || 0,
+      reasoningTokens: fromLog.reasoningTokens || 0,
+      cachedPromptTokens: fromLog.cachedPromptTokens || 0,
+      updatedAt: fromLog.updatedAt || new Date().toISOString(),
+      source: fromLog.source || "unified.jsonl",
+    };
+  } catch {
+    /* ignore */
+  }
+}
+
 function getContextSnapshot() {
+  hydrateContextFromLogIfNeeded();
   const used = lastContext.promptTokens || 0;
   const window = lastContext.contextWindow || 500000;
   const percent = Math.min(100, (used / window) * 100);
@@ -527,4 +561,5 @@ module.exports = {
   beginTurnUsage,
   consumeTurnUsage,
   extractUsageFromPayload,
+  setLatestInferenceLoader,
 };

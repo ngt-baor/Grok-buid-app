@@ -9,8 +9,17 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outPath = path.join(root, "assets", "icon.png");
+const svgPath = path.join(root, "assets", "icon.svg");
+const publicSvg = path.join(root, "public", "icon.svg");
 
-if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+// Prefer regenerating when SVG brand mark is newer than PNG (avoids stale Ø-style icon).
+const svgSrc = [svgPath, publicSvg].find((p) => fs.existsSync(p));
+if (
+  svgSrc &&
+  fs.existsSync(outPath) &&
+  fs.statSync(outPath).size > 500 &&
+  fs.statSync(outPath).mtimeMs >= fs.statSync(svgSrc).mtimeMs
+) {
   console.log(`keep existing ${outPath} (${fs.statSync(outPath).size} bytes)`);
   process.exit(0);
 }

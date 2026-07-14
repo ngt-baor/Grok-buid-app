@@ -702,6 +702,8 @@ declare global {
         terminal?: string;
       }) => Promise<{ ok: boolean; cmd?: string; cwd?: string }>;
       removeRecentProject: (projectPath: string) => Promise<AppSettings>;
+      /** Sync Electron titleBarOverlay / window chrome with light|dark. */
+      setChromeTheme?: (theme: "light" | "dark" | string) => Promise<{ ok: boolean }>;
       startAgent: (opts?: Record<string, unknown>) => Promise<{
         ok: boolean;
         sessionId: string;
