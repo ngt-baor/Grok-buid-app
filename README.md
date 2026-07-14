@@ -1,80 +1,126 @@
 # Grok Build
 
-Desktop shell (Electron) cho **Grok CLI** — chat/agent theo project, UI gần Codex, runtime vẫn là Grok local.
+Grok Build is a Windows desktop app for working with Grok CLI in project-based workspaces. It provides a focused UI for project chat, local workspace context, usage tracking, settings, skills, and GitHub Releases updates.
 
-- **Repo:** https://github.com/ngt-baor/Grok-buid-app  
-- **Update in-app:** GitHub Releases (`ngt-baor/Grok-buid-app`)  
-- **Version:** `0.1.4`
+- Current version: `0.1.4`
+- Platform: Windows x64
+- Runtime: Electron + React + Vite
 
-## Chạy
+## Project Overview
+
+Grok Build wraps the local Grok CLI with a desktop interface designed for coding and project workflows. The app keeps sessions per project, displays useful project state, supports bundled skills, and can check/download new releases from GitHub.
+
+The app does not bundle user login tokens. Authentication and CLI data stay on the local machine.
+
+## Key Features
+
+- Project picker with recent workspaces.
+- Multi-tab chat sessions per project.
+- Streaming responses with stop control.
+- Local file tree, file preview, and diff view for changed files.
+- Git status overview: branch, dirty state, ahead/behind, and worktree signals.
+- Model selection and reasoning-effort settings.
+- In-app Grok CLI install/update flow.
+- In-app xAI login flow with device code.
+- Usage panel for weekly SuperGrok quota, billing credits, and token logs.
+- Settings for theme, language, approval mode, external terminal, and optional Chrome DevTools MCP.
+- Skills library loaded from the project and from packaged app resources.
+- GitHub Releases updater for Setup-based app updates.
+
+## Requirements
+
+- Windows 10/11 x64.
+- Node.js and npm for development.
+- Grok CLI for runtime usage. The app can install/update it from the UI.
+- xAI account login for authenticated Grok CLI usage.
+
+## Getting Started
+
+Clone and install dependencies:
 
 ```powershell
 git clone https://github.com/ngt-baor/Grok-buid-app.git
 cd Grok-buid-app
 npm install
-npm run dev          # dev (Vite + Electron)
-# hoặc
-npm run build
-npm run start        # production UI
 ```
 
-Đóng gói Windows:
+Run in development mode:
 
 ```powershell
-npm run dist:win     # → release/*.exe (Setup + Portable)
+npm run dev
 ```
 
-### Yêu cầu runtime
+Run the production UI locally:
 
-| Cần | Ghi chú |
-|-----|---------|
-| **Grok CLI** | `~\.grok\bin\grok.exe` — cài **trong app** (progress giống update) hoặc tự cài |
-| **Đăng nhập xAI** | OIDC **device-code trong app** (mở web + nhập mã). Terminal/`grok login` chỉ còn fallback |
-| Token | `~\.grok\auth.json` trên máy đang chạy — **không** nhúng trong `.exe` |
-
-## Tính năng chính
-
-| Nhóm | Chi tiết |
-|------|----------|
-| **Chat / agent** | ACP qua Grok CLI · stream · tool cards · stop · multi-tab theo project |
-| **Project** | Mở folder · recent · draft theo tab · single-flight (đổi tab/project khi agent chạy → turn cũ chạy hết, không spill) |
-| **Model** | List model live · reasoning effort high/medium/low |
-| **Git** | Branch, dirty, ahead/behind, status, worktrees |
-| **Files / Diff** | Cây file + preview · diff khi agent ghi file |
-| **Auth / CLI** | Login device-code in-app · cài/cập nhật CLI in-app · refresh token |
-| **Settings** | Theme · **UI vi/en** · always-approve · terminal ngoài · Chrome DevTools MCP (opt-in) · personalization |
-| **Harness** | Detect AGENTS/MEMORY · domains/runbooks · post-task checklist · privacy banner |
-| **Usage** | SuperGrok tuần (`?format=credits`) + Credits billing + token log — **tuần ≠ credits ≠ tokens** |
-| **Update** | Kiểm tra / tải từ GitHub Releases |
-
-## Phím tắt
-
-| Phím | Việc |
-|------|------|
-| `Ctrl+K` | Command palette |
-| `Ctrl+B` / `Ctrl+Alt+B` / `Ctrl+J` | Sidebar trái / panel phải / panel dưới |
-| `Ctrl+O` / `Ctrl+N` / `Ctrl+,` | Mở folder / tab mới / Settings |
-| `Ctrl+\`` | Terminal ngoài (cwd = project) |
-| `Enter` / `Shift+Enter` | Gửi / xuống dòng |
-
-## Data local
-
-| Path | Nội dung |
-|------|----------|
-| `%APPDATA%\grok-build-app\settings.json` | Settings app |
-| `%APPDATA%\grok-build-app\project-sessions\` | Chat / tab theo project |
-| `~\.grok\auth.json` | OIDC token (dùng chung với CLI) |
-| `~\.grok\bin\grok.exe` | Grok CLI |
-
-## Cấu trúc (tóm tắt)
-
-```
-electron/   main, preload, acp-bridge, auth, cli-install, sessions, git, …
-src/        App.tsx, i18n.ts, styles
-docs/       bug notes
+```powershell
+npm run build
+npm run start
 ```
 
-## Ghi chú
+## Build and Release
 
-- **SuperGrok tuần** = pool dùng chung (web Settings → Usage). **Credits** = kỳ billing Build. **Token** = inference từ `~\.grok\logs\`
-- Grok Desktop (app xAI) có thể phình IndexedDB: `npm run fix:idb-bloat` hoặc palette → Clean IndexedDB — [docs/BUG-IndexedDB-WAL-balloon.md](./docs/BUG-IndexedDB-WAL-balloon.md).
+Build the Windows installer and portable package:
+
+```powershell
+npm run dist:win
+```
+
+Validate release files:
+
+```powershell
+npm run release:checklist
+```
+
+Run packaged-app smoke test:
+
+```powershell
+npm run smoke:ui
+```
+
+GitHub Release assets for each version:
+
+- `Grok-Build-Setup-<version>.exe`
+- `Grok-Build-Setup-<version>.exe.blockmap`
+- `Grok-Build-Portable-<version>.exe`
+- `latest.yml`
+
+Do not upload `release/win-unpacked/`, debug YAML files, local logs, environment files, or machine-specific configuration.
+
+## Project Structure
+
+```text
+assets/      App icons and build resources.
+docs/        Project notes and troubleshooting documents.
+electron/    Electron main process, preload bridge, updater, auth, CLI, sessions, Git, and skills logic.
+public/      Static files copied into the Vite build.
+scripts/     Build, release, smoke-test, icon, and maintenance scripts.
+skills/      Project skill library bundled into the packaged app.
+src/         React UI, styles, i18n, and renderer-side app logic.
+release/     Local build output generated by electron-builder.
+dist/        Vite production output.
+```
+
+## Local Data
+
+Common local paths:
+
+```text
+%APPDATA%\grok-build-app\settings.json          App settings
+%APPDATA%\grok-build-app\project-sessions\      Project chat sessions
+~\.grok\auth.json                                xAI/Grok CLI authentication token
+~\.grok\bin\grok.exe                             Grok CLI binary
+```
+
+Keep `.env`, auth files, logs, build output, installer files, and machine-local configuration out of Git.
+
+## Useful Scripts
+
+```powershell
+npm run dev                Start Vite + Electron for development
+npm run build              Type-check and build renderer output
+npm run start              Run the production UI locally
+npm run dist:win           Build Windows Setup and Portable packages
+npm run smoke:ui           Smoke-test packaged app via CDP
+npm run release:checklist  Check release assets before upload
+npm run fix:idb-bloat      Clean oversized local IndexedDB data
+```
