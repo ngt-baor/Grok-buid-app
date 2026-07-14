@@ -44,7 +44,7 @@ npm run dist:win     # → release/*.exe (Setup + Portable)
 | **Auth / CLI** | Login device-code in-app · cài/cập nhật CLI in-app · refresh token |
 | **Settings** | Theme · **UI vi/en** · always-approve · terminal ngoài · Chrome DevTools MCP (opt-in) · personalization |
 | **Harness** | Detect AGENTS/MEMORY · domains/runbooks · post-task checklist · privacy banner |
-| **Usage** | Credits (billing API) + token từ log CLI — **credits ≠ tokens** |
+| **Usage** | SuperGrok tuần (`?format=credits`) + Credits billing + token log — **tuần ≠ credits ≠ tokens** |
 | **Update** | Kiểm tra / tải từ GitHub Releases |
 
 ## Phím tắt
@@ -76,5 +76,5 @@ docs/       bug notes
 
 ## Ghi chú
 
-- **Credits** = đơn vị billing xAI. **Token** = inference thật từ `~\.grok\logs\`
+- **SuperGrok tuần** = pool dùng chung (web Settings → Usage). **Credits** = kỳ billing Build. **Token** = inference từ `~\.grok\logs\`
 - Grok Desktop (app xAI) có thể phình IndexedDB: `npm run fix:idb-bloat` hoặc palette → Clean IndexedDB — [docs/BUG-IndexedDB-WAL-balloon.md](./docs/BUG-IndexedDB-WAL-balloon.md).

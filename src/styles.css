@@ -1357,6 +1357,12 @@ html.theme-light .codex-empty .empty-logo .logo-img-dark { display: none; }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* Last-resort when structure still unusable — keep stream-like readability */
+.bubble.assistant .md-raw-fallback .md-p-raw {
+  white-space: pre-wrap;
+  line-height: 1.55;
+  max-width: 100%;
+}
 .bubble.assistant .md-h {
   margin: 0.35em 0 0.15em;
   font-weight: 650;
@@ -2738,6 +2744,12 @@ html.theme-light .image-lightbox-stage {
   gap: 0;
   padding: 4px 0 2px;
 }
+.usage-modal-note {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-faint);
+}
 .usage-modal-foot {
   display: flex;
   justify-content: space-between;
@@ -2745,7 +2757,12 @@ html.theme-light .image-lightbox-stage {
   margin-top: 14px;
   gap: 8px;
 }
-.usage-cta-row { margin-top: 10px; }
+.usage-cta-row {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .usage-cta {
   display: block;
   width: 100%;

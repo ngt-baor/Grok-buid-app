@@ -80,6 +80,75 @@ async function fetchBilling() {
   };
 }
 
+/**
+ * SuperGrok shared weekly pool (Chat / Imagine / Voice / Build).
+ * Same source as web Settings → Usage when API returns USAGE_PERIOD_TYPE_WEEKLY.
+ * @see pi-grok-cli: GET /v1/billing?format=credits
+ */
+async function fetchWeeklyQuota() {
+  const auth = await getValidAccessToken();
+  const data = await httpsGetJson("/v1/billing?format=credits", auth.token);
+  const cfg = data?.config || data || {};
+  const period = cfg.currentPeriod || cfg.period || null;
+  const periodType = String(
+    (period && (period.type || period.periodType || period.kind)) ||
+      cfg.periodType ||
+      cfg.usagePeriodType ||
+      ""
+  );
+  const periodEnd =
+    cfg.billingPeriodEnd ||
+    period?.end ||
+    period?.billingPeriodEnd ||
+    cfg.periodEnd ||
+    null;
+  const periodStart =
+    cfg.billingPeriodStart ||
+    period?.start ||
+    period?.billingPeriodStart ||
+    cfg.periodStart ||
+    null;
+
+  // Strict: USAGE_PERIOD_TYPE_WEEKLY (pi-grok-cli). Fallback: reset within ~2–14 days.
+  let isWeekly = /WEEKLY/i.test(periodType);
+  if (!isWeekly && periodEnd) {
+    const endMs = Date.parse(periodEnd);
+    if (Number.isFinite(endMs)) {
+      const days = (endMs - Date.now()) / (24 * 60 * 60 * 1000);
+      if (days > 0.5 && days <= 14) isWeekly = true;
+    }
+  }
+  if (!isWeekly) return null;
+
+  // creditUsagePercent = % already used (0–100). Omitted at fresh-period start → 0.
+  let usedPercent = num(cfg.creditUsagePercent);
+  if (usedPercent == null) usedPercent = num(cfg.usedPercent);
+  if (usedPercent == null) usedPercent = num(cfg.usagePercent);
+  if (usedPercent == null && cfg.usage) {
+    usedPercent = num(cfg.usage.creditUsagePercent) ?? num(cfg.usage.usedPercent);
+  }
+  if (usedPercent == null) usedPercent = 0;
+
+  usedPercent = Math.max(0, Math.min(100, usedPercent));
+  const remainingPercent = Math.max(0, 100 - usedPercent);
+
+  return {
+    source: "cli-chat-proxy/v1/billing?format=credits",
+    periodType: periodType || "USAGE_PERIOD_TYPE_WEEKLY",
+    periodStart,
+    periodEnd,
+    usedPercent,
+    remainingPercent,
+    used: usedPercent,
+    limit: 100,
+    remaining: remainingPercent,
+    unit: "percent",
+    note: "Pool SuperGrok tuần dùng chung (Chat/Build/Imagine/Voice) — khớp web Settings → Usage.",
+    fetchedAt: new Date().toISOString(),
+    raw: cfg,
+  };
+}
+
 async function fetchModels() {
   const auth = await getValidAccessToken();
   const data = await httpsGetJson("/v1/models", auth.token);
@@ -286,6 +355,14 @@ async function getUsageSnapshot() {
     billingError = String(err.message || err);
   }
 
+  let weeklyQuota = null;
+  let weeklyError = null;
+  try {
+    weeklyQuota = await fetchWeeklyQuota();
+  } catch (err) {
+    weeklyError = String(err.message || err);
+  }
+
   let tokens = null;
   let tokensError = null;
   try {
@@ -304,6 +381,24 @@ async function getUsageSnapshot() {
   const week = tokens?.week || five;
 
   return {
+    // SuperGrok shared weekly pool (primary gate — matches web Settings → Usage)
+    weeklyQuota: weeklyQuota
+      ? {
+          window: "weekly",
+          label: "SuperGrok tuần",
+          used: weeklyQuota.used,
+          limit: weeklyQuota.limit,
+          remaining: weeklyQuota.remaining,
+          remainingPercent: weeklyQuota.remainingPercent,
+          usedPercent: weeklyQuota.usedPercent,
+          periodStart: weeklyQuota.periodStart,
+          periodEnd: weeklyQuota.periodEnd,
+          unit: "percent",
+          source: weeklyQuota.source,
+          note: weeklyQuota.note,
+        }
+      : null,
+
     // Real billing credits (period — typically monthly for Grok Build)
     credits: billing
       ? {
@@ -358,8 +453,10 @@ async function getUsageSnapshot() {
 
     context: getContextSnapshot(),
     billing,
+    weeklyQuotaRaw: weeklyQuota,
     errors: {
       billing: billingError,
+      weekly: weeklyError,
       tokens: tokensError,
     },
     fetchedAt: new Date().toISOString(),
@@ -420,6 +517,7 @@ function extractUsageFromPayload(payload) {
 
 module.exports = {
   fetchBilling,
+  fetchWeeklyQuota,
   fetchModels,
   aggregateLogTokens,
   getUsageSnapshot,

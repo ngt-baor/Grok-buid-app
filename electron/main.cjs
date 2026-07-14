@@ -375,6 +375,7 @@ async function refreshUsageBroadcast() {
     return snapshot;
   } catch (err) {
     const snapshot = {
+      weeklyQuota: null,
       fiveHour: null,
       week: null,
       credits: null,

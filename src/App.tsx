@@ -688,6 +688,23 @@ function UsageLimitRow({
   );
 }
 
+function remainingPctFromWindow(
+  w?: { remainingPercent?: number | null; usedPercent?: number | null; limit?: number | null } | null
+): number | null {
+  if (!w) return null;
+  if (w.remainingPercent != null && Number.isFinite(w.remainingPercent)) {
+    return Math.max(0, Math.min(100, w.remainingPercent));
+  }
+  if (w.usedPercent != null && Number.isFinite(w.usedPercent)) {
+    return Math.max(0, Math.min(100, 100 - w.usedPercent));
+  }
+  if (w.limit != null && w.limit > 0 && typeof (w as { used?: number }).used === "number") {
+    const used = (w as { used?: number }).used ?? 0;
+    return Math.max(0, Math.min(100, 100 - (used / w.limit) * 100));
+  }
+  return null;
+}
+
 function formatUsageReset(iso?: string | null) {
   if (!iso) return undefined;
   try {
@@ -3098,6 +3115,7 @@ export function App() {
           usageRef.current = usageRef.current
             ? { ...usageRef.current, context: d }
             : {
+                weeklyQuota: null,
                 credits: null,
                 fiveHour: null,
                 week: null,
@@ -3109,6 +3127,7 @@ export function App() {
           const next = prev
             ? { ...prev, context: d }
             : {
+                weeklyQuota: null,
                 credits: null,
                 fiveHour: null,
                 week: null,
@@ -4675,12 +4694,16 @@ export function App() {
     return c.label.toLowerCase().includes(q) || (c.hint || "").toLowerCase().includes(q);
   });
 
-  const creditPct =
-    usage?.credits?.remainingPercent != null
-      ? usage.credits.remainingPercent
-      : usage?.credits?.limit
-        ? Math.max(0, 100 - (usage.credits.usedPercent || 0))
-        : null;
+  // Prefer SuperGrok weekly (real gate) for chip; fall back to monthly credits.
+  const weeklyPct = remainingPctFromWindow(usage?.weeklyQuota);
+  const creditPct = remainingPctFromWindow(usage?.credits);
+  const primaryQuotaPct = weeklyPct != null ? weeklyPct : creditPct;
+  const primaryQuotaLabel =
+    weeklyPct != null
+      ? `${weeklyPct.toFixed(0)}% tuần`
+      : creditPct != null
+        ? `${creditPct.toFixed(0)}% credits`
+        : "Usage";
 
   const titleMenus: { key: "file" | "edit" | "view" | "help"; label: string }[] = [
     { key: "file", label: t("menu.file") },
@@ -5058,17 +5081,26 @@ export function App() {
               <small className="user-usage-line">
                 <span
                   className={`credit-chip ${
-                    creditPct == null
+                    primaryQuotaPct == null
                       ? ""
-                      : creditPct <= 15
+                      : primaryQuotaPct <= 15
                         ? "low"
-                        : creditPct <= 40
+                        : primaryQuotaPct <= 40
                           ? "mid"
                           : "ok"
                   }`}
+                  title={
+                    weeklyPct != null && creditPct != null
+                      ? `SuperGrok tuần còn ${weeklyPct.toFixed(0)}% · Credits còn ${creditPct.toFixed(0)}%`
+                      : weeklyPct != null
+                        ? `SuperGrok tuần còn ${weeklyPct.toFixed(0)}%`
+                        : creditPct != null
+                          ? `Credits còn ${creditPct.toFixed(0)}%`
+                          : "Mức sử dụng"
+                  }
                 >
                   <IconBolt size={11} />
-                  {creditPct != null ? `${creditPct.toFixed(0)}% credits` : "Usage"}
+                  {primaryQuotaLabel}
                 </span>
                 <span className="usage-sep" aria-hidden>
                   ·
@@ -5605,8 +5637,9 @@ export function App() {
                         }}
                       />
                     ) : liveText ? (
-                      /* Fresh node after stream — no leftover textContent; markdown only */
-                      <div className="body stream-body md-body">
+                      /* Fresh node after stream — key forces remount so stream textContent
+                         cannot stick if a prior MarkdownBody render threw. */
+                      <div className="body stream-body md-body" key={`md-${it.id}`}>
                         <MarkdownBody text={liveText} />
                       </div>
                     ) : null}
@@ -6588,19 +6621,28 @@ export function App() {
             </div>
             <div className="usage-modal-grid">
               <UsageLimitRow
-                title="Giới hạn credits"
-                remPct={
-                  usage?.credits?.remainingPercent ??
-                  (usage?.credits?.limit
-                    ? Math.max(0, 100 - (usage.credits.usedPercent || 0))
-                    : null)
+                title="Giới hạn SuperGrok tuần"
+                remPct={remainingPctFromWindow(usage?.weeklyQuota)}
+                hint={
+                  formatUsageReset(usage?.weeklyQuota?.periodEnd) ||
+                  (usage?.errors?.weekly
+                    ? `Không lấy được pool tuần${usage.errors.weekly ? ` (${usage.errors.weekly.slice(0, 80)})` : ""}`
+                    : "Pool dùng chung Chat / Build / Imagine / Voice")
                 }
+              />
+              <UsageLimitRow
+                title="Giới hạn credits"
+                remPct={remainingPctFromWindow(usage?.credits)}
                 hint={
                   formatUsageReset(usage?.credits?.periodEnd) ||
-                  (usage?.errors?.billing ? "Không lấy được billing" : undefined)
+                  (usage?.errors?.billing ? "Không lấy được billing" : "Kỳ billing Build (thường tháng)")
                 }
               />
             </div>
+            <p className="usage-modal-note hint">
+              Hết pool tuần → Build/web có thể bị chặn dù credits tháng vẫn còn. Credits là budget
+              Build riêng; tuần SuperGrok là gate chính.
+            </p>
             <div className="usage-modal-foot">
               <span className="hint">
                 {usage?.fetchedAt
@@ -6615,6 +6657,15 @@ export function App() {
               <button
                 type="button"
                 className="usage-cta"
+                onClick={() =>
+                  void window.grokApp.openExternal("https://grok.com/?_s=usage")
+                }
+              >
+                Usage SuperGrok (web) ↗
+              </button>
+              <button
+                type="button"
+                className="usage-cta ghost"
                 onClick={() => void window.grokApp.openExternal("https://x.ai")}
               >
                 Nâng cấp / billing xAI ↗

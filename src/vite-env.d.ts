@@ -376,8 +376,11 @@ export type TokenWindow = {
 };
 
 export type UsageSnapshot = {
+  /** SuperGrok shared weekly pool (web Settings → Usage). Primary gate for Build. */
+  weeklyQuota?: TokenWindow | null;
   credits: TokenWindow | null;
   fiveHour: TokenWindow | null;
+  /** Local log token totals (7d rolling) — not SuperGrok weekly quota. */
   week: TokenWindow | null;
   context?: {
     promptTokens: number;

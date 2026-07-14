@@ -15,20 +15,22 @@ description: >
 | Profile | `electron/profile-stats.cjs` · `profile:stats`, `profile:record-turn` |
 | UI | Settings Hồ sơ + usage modal |
 
-## Two different metrics
+## Three different metrics
 
 | Metric | Source | Meaning |
 |--------|--------|---------|
-| **Credits** | xAI billing API | Spend/quota product units |
-| **Tokens** | `~\.grok\logs\` (+ local activity) | Inference volume |
+| **Weekly SuperGrok** | `GET /v1/billing?format=credits` (`creditUsagePercent`, weekly period) | Shared pool Chat/Build/Imagine/Voice — **primary gate** (web Settings → Usage) |
+| **Credits** | `GET /v1/billing` (`monthlyLimit` / period) | Build billing period (usually monthly) |
+| **Tokens** | `~\.grok\logs\` (+ local activity) | Inference volume (not official quota) |
 
-Never label credits as tokens or vice versa.
+Never label credits as tokens or vice versa. Prefer **weekly remaining %** on the chip; show both bars in the usage modal.
 
 ## Debug checklist
 
 | Symptom | Check |
 |---------|--------|
 | Credits zero/error | auth; network; API shape change |
+| Weekly missing / — | try `?format=credits`; check `errors.weekly`; auth; period type |
 | Tokens empty | log path; parse filters; permissions |
 | Heatmap flat | `profile:record-turn` not called; stats merge |
 | Skills used wrong | skill name extraction from logs/turns |

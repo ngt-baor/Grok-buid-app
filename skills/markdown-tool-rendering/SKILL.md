@@ -25,6 +25,8 @@ description: >
 | Links | external via safe open |
 | Tool card states | pending / running / done / error |
 | Long output | clamp/scroll, UI remains usable |
+| Collapsed md (no `\n`) | `expandCollapsedMarkdown` restores `###` / GFM tables |
+| Memory auto-save | keeps newlines (`normalizeMemoryText`); does not `/\s+/` wipe |
 
 ## Rules
 
