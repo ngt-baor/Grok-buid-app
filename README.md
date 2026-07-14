@@ -4,7 +4,7 @@ Desktop shell (Electron) cho **Grok CLI** — chat/agent theo project, UI gần 
 
 - **Repo:** https://github.com/ngt-baor/Grok-buid-app  
 - **Update in-app:** GitHub Releases (`ngt-baor/Grok-buid-app`)  
-- **Version:** `0.1.3`
+- **Version:** `0.1.4`
 
 ## Chạy
 
