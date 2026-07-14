@@ -89,7 +89,7 @@
         }
       ],
       "icon": "assets/icon.png",
-      "artifactName": "${productName}-Setup-${version}.${ext}"
+      "artifactName": "Grok-Build-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -99,7 +99,7 @@
       "shortcutName": "Grok Build"
     },
     "portable": {
-      "artifactName": "${productName}-Portable-${version}.${ext}"
+      "artifactName": "Grok-Build-Portable-${version}.${ext}"
     },
     "publish": [
       {

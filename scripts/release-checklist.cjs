@@ -9,9 +9,9 @@ if (!version) throw new Error("package.json missing version");
 
 const releaseDir = path.join(root, "release");
 const required = [
-  `Grok Build-Setup-${version}.exe`,
-  `Grok Build-Setup-${version}.exe.blockmap`,
-  `Grok Build-Portable-${version}.exe`,
+  `Grok-Build-Setup-${version}.exe`,
+  `Grok-Build-Setup-${version}.exe.blockmap`,
+  `Grok-Build-Portable-${version}.exe`,
   "latest.yml",
 ];
 
@@ -48,7 +48,7 @@ for (const name of required) {
 }
 
 const stale = fs.existsSync(releaseDir)
-  ? fs.readdirSync(releaseDir).filter((name) => /Grok Build.*\.(exe|blockmap)$/i.test(name) && !name.includes(version))
+  ? fs.readdirSync(releaseDir).filter((name) => /Grok[- ]Build.*\.(exe|blockmap)$/i.test(name) && !name.includes(version))
   : [];
 
 console.log("");
