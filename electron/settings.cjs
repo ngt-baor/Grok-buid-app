@@ -27,6 +27,11 @@ function defaultSettings() {
     turnReport: true,
     /** Desktop notification when turn finishes while app is in background */
     notifyOnTurnDone: true,
+    /**
+     * Codex-style message queue while agent is busy on the current tab.
+     * true (default) → follow-ups enqueue; false → send steals (cancel + run new).
+     */
+    messageQueueEnabled: true,
     /** Privacy banner when harness / MEMORY detected */
     privacyBanner: true,
     /** Preferred external terminal: auto | wt | cmd | powershell */

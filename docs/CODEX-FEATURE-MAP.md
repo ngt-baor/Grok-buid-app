@@ -25,15 +25,25 @@ Phân tích từ screenshot ChatGPT Codex (desktop) so với **Grok Build App** 
 | 2 | Tác vụ mới / New chat | `createTab` + clear empty state | ✅ |
 | 3 | Lịch sử session theo project | Tabs + recent projects + persist `%APPDATA%` | ✅ |
 | 4 | Danh sách dự án (mở folder) | Open Folder + recent list | ✅ |
-| 5 | Session con dưới project | Multi-tab trong project | ✅ |
+| 5 | Session con dưới project | Multi-tab trong project (cây indent) | ✅ |
+| 5b | Sidebar: spinner / **Đang chờ phê duyệt** | `busy` + `permission` badge trên project/session | ✅ |
+| 5c | Collapse **Dự án › / Tác vụ ›** + chấm activity | localStorage open state | ✅ |
+| 5d | **Hiển thị thêm** project list | Preview 6 + expand | ✅ |
+| 5e | Menu project `…` | Ghim · Explorer · Gỡ recent (local only) | ✅ |
+| 5f | Ghim session/tab + sort Ưu tiên / Gần đây | localStorage pin + order | ✅ partial (không flat list / manual DnD / archive / rename) |
+| 5g | Section **Đã ghim** (collapsible, global shortcuts) | Pin project + session; session ẩn khỏi cây project khi đã ghim | ✅ |
 | 6 | Empty state + 4 action cards | Prompt starter → composer / auto-send | ✅ UI |
 | 7 | Composer + placeholder | Textarea + attach + Enter | ✅ |
 | 8 | Chip project · local · branch | Project name + “Local”; branch + dirty/ahead/behind | ✅ |
 | 9 | Model picker | List models CLI + select | ✅ |
 | 10 | Reasoning / effort | `--reasoning-effort` high/med/low | ✅ (≠ Codex “Sol”) |
 | 11 | Stream chat + tool timeline | ACP `session/update` | ✅ |
-| 12 | Permission approve/deny | Modal Allow once / Always session / Deny | ✅ |
+| 11b | **Đã chạy xong** (duration · thao tác · lỗi · chips) | `turn_report` + activity banner + in-app toast | ✅ |
+| 11c | **Đã chỉnh sửa N tệp** (+/− stats, Xem xét → Diff) | `turn_report.fileEdits` từ `diff:new` | ✅ partial (không Undo hàng loạt) |
+| 11d | Live pill **N tệp đã thay đổi +x −y** (lúc agent chạy) | Chip trên composer, click → Diff | ✅ |
+| 12 | Permission approve/deny | Card Codex-style: path/+−, Từ chối · Cho phép 1 lần · mọi (session) | ✅ |
 | 13 | Quyền: mặc định / always approve | Settings + session allow-always | ✅ |
+| 13b | Menu composer “phê duyệt thế nào?” | Chip: Yêu cầu phê duyệt · Luôn cho phép (+ session off). **Không** hiện option chưa hỗ trợ | ✅ |
 | 14 | File tree + mở file | Right panel Files / Preview / Explorer | ✅ |
 | 15 | Diff khi agent ghi file | Diff panel từ ACP write | ✅ |
 | 16 | Command palette | `Ctrl+K` (+ terminal, harness, git…) | ✅ |
@@ -45,12 +55,12 @@ Phân tích từ screenshot ChatGPT Codex (desktop) so với **Grok Build App** 
 | 20 | Harness badge + panel | Detect, domains, runbooks, checklist, privacy | ✅ (Codex không có) |
 | 21 | Đính kèm ảnh/file | Clipboard, drag-drop, dialog | ✅ |
 | 22 | Stop generation | Cancel turn | ✅ |
+| 22b | **Queue + steal** (tin khi agent bận) | Queue pill · edit/xóa · auto-run sau turn · steal (hủy + chạy prompt mới) · tắt queue trong Settings | ✅ |
 | 23 | Terminal ngoài | `Ctrl+\`` · WT / PowerShell / cmd (không PTY embed) | ✅ partial |
 | 24 | Git worktrees + status | Panel Git · open worktree as project | ✅ |
 | 25 | Post-task checklist | Harness verify/record/privacy after tools | ✅ |
-| 26 | Phím tắt | Ctrl+K/B/O/N/`,`/` | ✅ |
-| 27 | **Queue follow-up** (chip khi agent busy) | Renderer FIFO queue + drain sau turn | 📋 Planned — `docs/FEATURE-QUEUE-STEER.md` |
-| 28 | **Chỉ dẫn / Steer** mid-turn | Prefer ACP native; fallback cancel+prompt | 📋 Planned P2 — same doc |
+| 26 | Phím tắt | Catalog + search; modal `Ctrl+Shift+/`; Settings→Phím tắt | ✅ |
+| 26b | Menu `?` footer (help) | Phím tắt · Cập nhật · Docs · Giới thiệu — **không** Chrome extension | ✅ |
 
 ---
 
@@ -114,5 +124,4 @@ Phân tích từ screenshot ChatGPT Codex (desktop) so với **Grok Build App** 
 
 ---
 
-*Cập nhật 2026-07-10: ship bulk remaining doable features.*  
-*Cập nhật 2026-07-16: queue + steer backlog from FB + Codex screenshots.*
+*Cập nhật 2026-07-10: ship bulk remaining doable features.*`r`n*Cập nhật 2026-07-16: queue + steal (Codex-style message policy) — xem `docs/FEATURE-QUEUE-STEER.md`.*

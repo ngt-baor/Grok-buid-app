@@ -471,12 +471,17 @@ function buildHeatmap(dailyTokens) {
   return cells;
 }
 
+/**
+ * Daily heat levels for coding-agent usage (often multi-million tokens/day).
+ * Keep in sync with src/App.tsx HEAT_THRESHOLDS.daily (UI always recomputes from tokens).
+ * L1 < 2Tr · L2 < 5Tr · L3 < 12Tr · L4 < 25Tr · L5 ≥ 25Tr
+ */
 function heatLevel(tokens) {
   if (!tokens || tokens <= 0) return 0;
-  if (tokens < 5_000) return 1;
-  if (tokens < 25_000) return 2;
-  if (tokens < 100_000) return 3;
-  if (tokens < 400_000) return 4;
+  if (tokens < 2_000_000) return 1;
+  if (tokens < 5_000_000) return 2;
+  if (tokens < 12_000_000) return 3;
+  if (tokens < 25_000_000) return 4;
   return 5;
 }
 

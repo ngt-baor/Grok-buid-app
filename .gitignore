@@ -48,6 +48,7 @@ scripts/_*.js
 scripts/_*.cjs
 scripts/_*.mjs
 scripts/_*.ts
+scripts/_*.txt
 scripts/_*.html
 scripts/_*.hta
 scripts/APPLY-ICON.bat

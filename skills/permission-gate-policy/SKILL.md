@@ -15,16 +15,22 @@ description: >
 | IPC | `agent:permission-response` |
 | Settings | always-approve / permission defaults (`settings`) |
 | Bridge | permission requests from ACP → main → modal |
-| UI | permission modal in `App.tsx` |
+| UI | Codex-style card in `App.tsx` (`parsePermissionParams`) |
 
 ## Modes
 
 | Choice | Effect |
 |--------|--------|
-| Allow once | This request only |
-| Always (session) | Same class for session lifetime |
-| Deny | Reject tool |
+| **Từ chối** / N / Esc | Reject tool |
+| **Cho phép một lần** / Y | This request only (`allow-once` or agent optionId) |
+| **Cho phép mọi chỉnh sửa** (▾ menu) | Session auto-approve (`allow-always` + chip) |
 | Settings always-approve | Global convenience — **dangerous** if broad |
+
+## UI parse
+
+- Prefer `toolCall.kind` / `title` / `locations` / `content[]` (diff) / `rawInput.path`
+- Show path rows + `+n −m` when available; command for `execute`
+- Fallback: compact JSON if nothing structured |
 
 ## Debug checklist
 

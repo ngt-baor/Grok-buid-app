@@ -33,6 +33,12 @@ export type AppSettings = {
   turnReport?: boolean;
   /** OS notification when a turn finishes and the app is in the background */
   notifyOnTurnDone?: boolean;
+  /**
+   * When agent is busy on the current tab: queue follow-up prompts (Codex-style).
+   * false → send while busy steals (cancel turn, then run new prompt).
+   * Default true.
+   */
+  messageQueueEnabled?: boolean;
   terminal?: "auto" | "wt" | "cmd" | "powershell" | string;
   /** Inject chrome-devtools-mcp into ACP session (opt-in) */
   chromeDevtoolsMcp?: boolean;
@@ -527,6 +533,16 @@ export type ChatItem =
       assistantPreview?: string;
       /** Id of the run item this report closes */
       runId?: string;
+      /**
+       * Files written/patched this turn (from diff:new), Codex-style summary.
+       * paths capped; totals are full-turn aggregates.
+       */
+      fileEdits?: {
+        files: number;
+        additions: number;
+        deletions: number;
+        paths: { path: string; additions: number; deletions: number }[];
+      };
       ts?: string;
     }
   | { id: string; kind: "system"; text: string; ts?: string }

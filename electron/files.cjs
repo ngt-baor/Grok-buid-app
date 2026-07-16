@@ -115,6 +115,22 @@ function readFileSafe(root, filePath, maxBytes = 400_000) {
 }
 
 /**
+ * Common prefix/suffix trim — cheap and accurate for typical edits in large files.
+ * Avoids the old n*m>400k path that marked entire files as +N/−N (e.g. +18k/−18k).
+ */
+function commonAffix(a, b) {
+  const n = a.length;
+  const m = b.length;
+  let pre = 0;
+  const preMax = Math.min(n, m);
+  while (pre < preMax && a[pre] === b[pre]) pre++;
+  let suf = 0;
+  const sufMax = Math.min(n - pre, m - pre);
+  while (suf < sufMax && a[n - 1 - suf] === b[m - 1 - suf]) suf++;
+  return { pre, suf, midA: n - pre - suf, midB: m - pre - suf };
+}
+
+/**
  * Simple line diff for before/after text.
  */
 function lineDiff(before, after, filePath = "") {
@@ -123,50 +139,91 @@ function lineDiff(before, after, filePath = "") {
   /** @type {{type:'same'|'add'|'del', text:string, line?:number}[]} */
   const lines = [];
 
-  // LCS-lite for moderate files
   const n = a.length;
   const m = b.length;
-  if (n * m > 400_000) {
-    // fallback: full replace view
-    for (const t of a) lines.push({ type: "del", text: t });
-    for (const t of b) lines.push({ type: "add", text: t });
-    return { filePath, lines, stats: { additions: m, deletions: n } };
+  const { pre, suf, midA, midB } = commonAffix(a, b);
+
+  // Unchanged prefix
+  for (let k = 0; k < pre; k++) {
+    lines.push({ type: "same", text: a[k], line: k + 1 });
   }
 
-  const dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-    }
-  }
+  const a0 = pre;
+  const b0 = pre;
+  const a1 = n - suf; // exclusive end of middle in a
+  const b1 = m - suf;
 
-  let i = 0;
-  let j = 0;
+  // Middle: LCS when cheap; otherwise linear scan (not full-file replace)
+  const midN = midA;
+  const midM = midB;
   let additions = 0;
   let deletions = 0;
-  while (i < n && j < m) {
-    if (a[i] === b[j]) {
-      lines.push({ type: "same", text: a[i], line: j + 1 });
-      i++;
-      j++;
-    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      lines.push({ type: "del", text: a[i] });
+
+  if (midN === 0 && midM === 0) {
+    // pure no-op middle
+  } else if (midN * midM > 400_000 || midN + midM > 12_000) {
+    // Large middle: O(n) walk — count true adds/dels, keep a compact view
+    // (common prefix/suffix already stripped so stats match real edit size)
+    deletions = midN;
+    additions = midM;
+    const maxShow = 80;
+    for (let k = 0; k < midN; k++) {
+      if (k < maxShow) lines.push({ type: "del", text: a[a0 + k] });
+    }
+    if (midN > maxShow) {
+      lines.push({ type: "del", text: `… ${midN - maxShow} dòng xóa khác` });
+    }
+    for (let k = 0; k < midM; k++) {
+      if (k < maxShow) lines.push({ type: "add", text: b[b0 + k], line: b0 + k + 1 });
+    }
+    if (midM > maxShow) {
+      lines.push({ type: "add", text: `… ${midM - maxShow} dòng thêm khác`, line: b1 });
+    }
+  } else {
+    const aa = a.slice(a0, a1);
+    const bb = b.slice(b0, b1);
+    const nn = aa.length;
+    const mm = bb.length;
+    const dp = Array.from({ length: nn + 1 }, () => new Uint32Array(mm + 1));
+    for (let i = nn - 1; i >= 0; i--) {
+      for (let j = mm - 1; j >= 0; j--) {
+        dp[i][j] =
+          aa[i] === bb[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+    let i = 0;
+    let j = 0;
+    while (i < nn && j < mm) {
+      if (aa[i] === bb[j]) {
+        lines.push({ type: "same", text: aa[i], line: b0 + j + 1 });
+        i++;
+        j++;
+      } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+        lines.push({ type: "del", text: aa[i] });
+        deletions++;
+        i++;
+      } else {
+        lines.push({ type: "add", text: bb[j], line: b0 + j + 1 });
+        additions++;
+        j++;
+      }
+    }
+    while (i < nn) {
+      lines.push({ type: "del", text: aa[i++] });
       deletions++;
-      i++;
-    } else {
-      lines.push({ type: "add", text: b[j], line: j + 1 });
+    }
+    while (j < mm) {
+      lines.push({ type: "add", text: bb[j], line: b0 + j + 1 });
       additions++;
       j++;
     }
   }
-  while (i < n) {
-    lines.push({ type: "del", text: a[i++] });
-    deletions++;
-  }
-  while (j < m) {
-    lines.push({ type: "add", text: b[j], line: j + 1 });
-    additions++;
-    j++;
+
+  // Unchanged suffix
+  for (let k = 0; k < suf; k++) {
+    const ai = a1 + k;
+    const bi = b1 + k;
+    lines.push({ type: "same", text: b[bi], line: bi + 1 });
   }
 
   return { filePath, lines, stats: { additions, deletions } };

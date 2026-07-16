@@ -1,20 +1,130 @@
 /**
  * Lightweight Markdown renderer for finished assistant messages.
- * Zero dependency — stream path stays plain textContent for performance.
- * Supports: GFM tables, headings, lists, code fences, bold/italic/code/links, hr, paragraphs.
+ * Zero npm deps (uses app i18n for chrome labels). Stream path stays plain
+ * textContent for performance.
+ * Supports: GFM tables, headings, lists, code fences (+ copy), bold/italic/code/links, hr, paragraphs.
  *
  * Also recovers "collapsed" markdown (headings/tables jammed on one line) which
  * shows up when models or memory storage strip newlines.
+ *
+ * Table robustness (2026-07-16):
+ * - Loose separators: |-| / |--| accepted (normalized to ---)
+ * - Fallback: ≥2 consecutive |…| rows without --- still render as <table>
+ * - Pad/truncate columns to header width; prefer rows starting with |
  */
-import { memo, useMemo, type ReactNode } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
+import { createT } from "./i18n";
 
 type Props = {
   text: string;
   className?: string;
+  /** UI locale for chrome labels (copy button). Defaults to vi. */
+  locale?: string;
 };
 
+/** Fenced code block with one-click copy (scripts, configs, long snippets). */
+function CodeBlock({
+  code,
+  lang,
+  locale,
+}: {
+  code: string;
+  lang: string;
+  locale?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const t = useMemo(() => createT(locale ?? "vi"), [locale]);
+  const resetTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimer.current != null) window.clearTimeout(resetTimer.current);
+    };
+  }, []);
+
+  const onCopy = useCallback(
+    async (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!code) return;
+      let ok = false;
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(code);
+          ok = true;
+        }
+      } catch {
+        ok = false;
+      }
+      if (!ok) {
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = code;
+          ta.setAttribute("readonly", "");
+          ta.style.position = "fixed";
+          ta.style.left = "-9999px";
+          document.body.appendChild(ta);
+          ta.select();
+          ok = document.execCommand("copy");
+          document.body.removeChild(ta);
+        } catch {
+          ok = false;
+        }
+      }
+      if (!ok) return;
+      setCopied(true);
+      if (resetTimer.current != null) window.clearTimeout(resetTimer.current);
+      resetTimer.current = window.setTimeout(() => setCopied(false), 1600);
+    },
+    [code]
+  );
+
+  return (
+    <div className="md-code-wrap">
+      <div className="md-code-toolbar">
+        <span className="md-code-lang">{lang || "\u00a0"}</span>
+        <button
+          type="button"
+          className={`md-code-copy${copied ? " is-copied" : ""}`}
+          onClick={onCopy}
+          aria-label={t("md.copy")}
+          title={t("md.copy")}
+        >
+          {copied ? t("md.copied") : t("md.copy")}
+        </button>
+      </div>
+      <pre className="md-pre" data-lang={lang || undefined}>
+        <code className="md-code-block">{code}</code>
+      </pre>
+    </div>
+  );
+}
+
+/**
+ * GFM wants ≥3 dashes; models often emit |-| or |--|.
+ * Accept 1+ dashes (optional : alignment).
+ */
 function isTableSepCell(cell: string): boolean {
-  return /^\s*:?-{3,}:?\s*$/.test(cell);
+  return /^\s*:?-{1,}:?\s*$/.test(cell);
+}
+
+/** Pad loose sep cells to --- so expand/parse stay consistent. */
+function normalizeSepCell(cell: string): string {
+  const t = cell.trim();
+  const m = t.match(/^(:?)(-{1,})(:?)$/);
+  if (!m) return "---";
+  const left = m[1] || "";
+  const right = m[3] || "";
+  return `${left}---${right}`;
 }
 
 function splitTableRow(line: string): string[] {
@@ -49,6 +159,13 @@ function isTableRow(line: string): boolean {
   return splitTableRow(t).length >= 2;
 }
 
+/** Prefer rows that start with | — avoids "Use | to split" false tables. */
+function isStrictTableRow(line: string): boolean {
+  const t = line.trim();
+  if (!t.startsWith("|")) return false;
+  return splitTableRow(t).length >= 2;
+}
+
 function isTableSeparator(line: string): boolean {
   if (!isTableRow(line)) return false;
   const cells = splitTableRow(line);
@@ -58,6 +175,19 @@ function isTableSeparator(line: string): boolean {
 function formatRow(cells: string[]): string {
   return "| " + cells.map((c) => c.trim()).join(" | ") + " |";
 }
+
+function padCells(cells: string[], n: number): string[] {
+  const out = cells.slice(0, n);
+  while (out.length < n) out.push("");
+  return out;
+}
+
+function formatSeparatorFromCells(cells: string[]): string {
+  return formatRow(cells.map(normalizeSepCell));
+}
+
+/** Match a GFM-ish separator run (1+ dashes per cell). Non-global for .test(). */
+const TABLE_SEP_RUN_RE = /\|(?:[ \t]*:?-{1,}:?[ \t]*\|)+/;
 
 /**
  * Rebuild newlines around structural markdown markers so the line-based
@@ -141,7 +271,7 @@ function peelTablesFromHeadingLines(text: string): string {
       if (!hm) return line;
       const prefix = hm[1]!;
       const rest = hm[2]!;
-      if (!/\|(?:[ \t]*:?-{3,}:?[ \t]*\|)+/.test(rest)) return line;
+      if (!TABLE_SEP_RUN_RE.test(rest)) return line;
 
       const expanded = expandInlineTables(rest);
       const pipeIdx = rest.indexOf("|");
@@ -195,9 +325,10 @@ function splitLongHeadings(text: string): string {
 /**
  * Find GFM table separator anchors and peel header + data rows onto separate lines.
  * Handles: | H1 | H2 | |---|---| | a | b | | c | d |
+ * Also loose seps: |-|-| / |--|--|
  */
 function expandInlineTables(text: string): string {
-  const sepRe = /\|(?:[ \t]*:?-{3,}:?[ \t]*\|)+/g;
+  const sepRe = new RegExp(TABLE_SEP_RUN_RE.source, "g");
   let out = "";
   let last = 0;
   let m: RegExpExecArray | null;
@@ -206,7 +337,8 @@ function expandInlineTables(text: string): string {
     const sep = m[0];
     const sepStart = m.index;
     const sepEnd = sepStart + sep.length;
-    const colCount = splitTableRow(sep).length;
+    const sepCells = splitTableRow(sep);
+    const colCount = sepCells.length;
     if (colCount < 2) continue;
 
     const before = text.slice(last, sepStart);
@@ -221,7 +353,8 @@ function expandInlineTables(text: string): string {
     out += prefix;
     const lines: string[] = [];
     if (header) lines.push(header);
-    lines.push(sep.trim());
+    // Always emit canonical --- separators (models often use 1–2 dashes).
+    lines.push(formatSeparatorFromCells(sepCells));
     for (const r of rows) lines.push(r);
 
     if (out.length > 0 && !out.endsWith("\n")) out += "\n";
@@ -412,7 +545,7 @@ function parseBlocks(src: string): Block[] {
     if (h) {
       let headingText = h[2]!;
       // Defensive: heading line still carries a GFM table — keep only the title
-      const sepInHeading = headingText.search(/\|(?:[ \t]*:?-{3,}:?[ \t]*\|)+/);
+      const sepInHeading = headingText.search(/\|(?:[ \t]*:?-{1,}:?[ \t]*\|)+/);
       if (sepInHeading >= 0) {
         const beforeSep = headingText.slice(0, sepInHeading);
         const pipeIdx = beforeSep.indexOf("|");
@@ -446,12 +579,15 @@ function parseBlocks(src: string): Block[] {
       continue;
     }
 
+    // Canonical GFM: header + separator (--- or loose - / --)
     if (
-      isTableRow(line) &&
+      isStrictTableRow(line) &&
       i + 1 < lines.length &&
       isTableSeparator(lines[i + 1] ?? "")
     ) {
-      const headers = splitTableRow(line);
+      const rawHeaders = splitTableRow(line);
+      const colCount = Math.max(rawHeaders.length, splitTableRow(lines[i + 1] ?? "").length, 2);
+      const headers = padCells(rawHeaders, colCount);
       i += 2;
       const rows: string[][] = [];
       while (i < lines.length) {
@@ -463,7 +599,7 @@ function parseBlocks(src: string): Block[] {
           const peek = lines[k] ?? "";
           if (
             k < lines.length &&
-            isTableRow(peek) &&
+            isStrictTableRow(peek) &&
             !isTableSeparator(peek)
           ) {
             i = k;
@@ -471,14 +607,43 @@ function parseBlocks(src: string): Block[] {
           }
           break;
         }
-        if (!isTableRow(rowLine)) break;
+        if (!isStrictTableRow(rowLine) && !isTableRow(rowLine)) break;
         if (isTableSeparator(rowLine)) break;
         const cells = splitTableRow(rowLine);
-        rows.push(headers.map((_, idx) => cells[idx] ?? ""));
+        rows.push(padCells(cells, colCount));
         i += 1;
       }
       blocks.push({ type: "table", headers, rows });
       continue;
+    }
+
+    // Fallback: ≥2 consecutive |…| rows without a separator (model often omits ---).
+    if (isStrictTableRow(line) && !isTableSeparator(line)) {
+      let j = i;
+      const rawRows: string[][] = [];
+      while (j < lines.length) {
+        const rl = lines[j] ?? "";
+        if (rl.trim() === "") break;
+        if (isTableSeparator(rl)) {
+          // Separator mid-block — treat as normal table starting at i (handled above next loop)
+          break;
+        }
+        if (!isStrictTableRow(rl)) break;
+        rawRows.push(splitTableRow(rl));
+        j += 1;
+      }
+      if (rawRows.length >= 2) {
+        const colCount = Math.max(2, ...rawRows.map((r) => r.length));
+        // Require majority of rows to look multi-column (avoid "a | b" prose walls)
+        const multi = rawRows.filter((r) => r.length >= 2).length;
+        if (multi >= 2 && multi >= Math.ceil(rawRows.length * 0.75)) {
+          const headers = padCells(rawRows[0]!, colCount);
+          const rows = rawRows.slice(1).map((r) => padCells(r, colCount));
+          blocks.push({ type: "table", headers, rows });
+          i = j;
+          continue;
+        }
+      }
     }
 
     if (/^\s*[-*+]\s+/.test(line)) {
@@ -517,6 +682,8 @@ function parseBlocks(src: string): Block[] {
       if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(next)) break;
       if (/^\s*[-*+]\s+/.test(next)) break;
       if (/^\s*\d+[.)]\s+/.test(next)) break;
+      // Don't swallow pipe tables into a paragraph (with or without ---).
+      if (isStrictTableRow(next)) break;
       if (
         isTableRow(next) &&
         i + 1 < lines.length &&
@@ -548,7 +715,7 @@ function hasUsefulStructure(blocks: Block[]): boolean {
   return rich >= 1 || shortParas >= 2;
 }
 
-function renderBlocks(blocks: Block[]): ReactNode[] {
+function renderBlocks(blocks: Block[], locale?: string): ReactNode[] {
   const nodes: ReactNode[] = [];
   let key = 0;
 
@@ -571,9 +738,7 @@ function renderBlocks(blocks: Block[]): ReactNode[] {
       }
       case "code":
         nodes.push(
-          <pre key={k} className="md-pre" data-lang={b.lang || undefined}>
-            <code className="md-code-block">{b.code}</code>
-          </pre>
+          <CodeBlock key={k} code={b.code} lang={b.lang} locale={locale} />
         );
         break;
       case "table":
@@ -634,7 +799,7 @@ function renderBlocks(blocks: Block[]): ReactNode[] {
   return nodes;
 }
 
-function MarkdownBodyInner({ text, className }: Props) {
+function MarkdownBodyInner({ text, className, locale }: Props) {
   const result = useMemo(() => {
     if (!text) return { mode: "empty" as const };
 
@@ -643,7 +808,7 @@ function MarkdownBodyInner({ text, className }: Props) {
       const blocks = parseBlocks(expanded);
 
       if (hasUsefulStructure(blocks)) {
-        return { mode: "md" as const, nodes: renderBlocks(blocks) };
+        return { mode: "md" as const, nodes: renderBlocks(blocks, locale) };
       }
 
       // Fallback: pre-wrap friendly text (prefer expanded if it gained newlines)
@@ -656,7 +821,7 @@ function MarkdownBodyInner({ text, className }: Props) {
       // Never blank the bubble — show original text if expand/parse blows up
       return { mode: "raw" as const, soft: text };
     }
-  }, [text]);
+  }, [text, locale]);
 
   if (result.mode === "empty") return null;
 

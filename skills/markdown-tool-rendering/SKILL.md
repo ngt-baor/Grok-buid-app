@@ -21,7 +21,7 @@ description: >
 | Case | Expect |
 |------|--------|
 | Streaming partial md | no crash; acceptable flicker |
-| Fenced code | readable, scroll, no layout explode |
+| Fenced code | readable, scroll; toolbar **Sao chép** / **Copy** copies full fence body |
 | Links | external via safe open |
 | Tool card states | pending / running / done / error |
 | Long output | clamp/scroll, UI remains usable |
