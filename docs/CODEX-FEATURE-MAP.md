@@ -49,6 +49,8 @@ Phân tích từ screenshot ChatGPT Codex (desktop) so với **Grok Build App** 
 | 24 | Git worktrees + status | Panel Git · open worktree as project | ✅ |
 | 25 | Post-task checklist | Harness verify/record/privacy after tools | ✅ |
 | 26 | Phím tắt | Ctrl+K/B/O/N/`,`/` | ✅ |
+| 27 | **Queue follow-up** (chip khi agent busy) | Renderer FIFO queue + drain sau turn | 📋 Planned — `docs/FEATURE-QUEUE-STEER.md` |
+| 28 | **Chỉ dẫn / Steer** mid-turn | Prefer ACP native; fallback cancel+prompt | 📋 Planned P2 — same doc |
 
 ---
 
@@ -106,8 +108,11 @@ Phân tích từ screenshot ChatGPT Codex (desktop) so với **Grok Build App** 
 5. **P2** — External terminal (thay PTY embed) — ✅ partial
 6. **P2** — Worktree panel — ✅
 7. **P2** — Harness runbooks / checklist / privacy — ✅
-8. **Không làm** — Clone branding ChatGPT, plugin store OpenAI, billing OpenAI, PTY full (tùy chọn sau)
+8. **P1** — Composer **queue** follow-ups (chip + drain) — 📋 `docs/FEATURE-QUEUE-STEER.md`
+9. **P2** — **Chỉ dẫn / Steer** mid-turn — 📋 same doc
+10. **Không làm** — Clone branding ChatGPT, plugin store OpenAI, billing OpenAI, PTY full (tùy chọn sau)
 
 ---
 
-*Cập nhật 2026-07-10: ship bulk remaining doable features.*
+*Cập nhật 2026-07-10: ship bulk remaining doable features.*  
+*Cập nhật 2026-07-16: queue + steer backlog from FB + Codex screenshots.*
