@@ -2,7 +2,7 @@
 
 Grok Build is a Windows desktop app for working with Grok CLI in project-based workspaces. It provides a focused UI for project chat, local workspace context, usage tracking, settings, skills, and GitHub Releases updates.
 
-- Current version: `0.1.6`
+- Current version: `0.1.7`
 - Platform: Windows x64
 - Runtime: Electron + React + Vite
 

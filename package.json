@@ -1,6 +1,6 @@
 {
   "name": "grok-build-app",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "description": "Desktop shell for Grok Build — project picker, ACP chat, harness-aware UI",
   "main": "electron/main.cjs",
@@ -88,7 +88,7 @@
           "arch": ["x64"]
         }
       ],
-      "icon": "assets/icon.png",
+      "icon": "assets/icon.ico",
       "artifactName": "Grok-Build-Setup-${version}.${ext}"
     },
     "nsis": {

@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -2247,9 +2248,22 @@ export type ComposerDraftHandle = {
   focus: () => void;
 };
 
+/** True when focus is in the composer textarea (prefer over React state during stream). */
+function isTypingInComposer(): boolean {
+  if (typeof document === "undefined") return false;
+  const el = document.activeElement;
+  return (
+    el instanceof HTMLTextAreaElement && Boolean(el.closest(".composer"))
+  );
+}
+
 /**
- * Draft textarea with LOCAL state — typing re-renders only this subtree,
- * not the whole App (was the cause of input jank / lag behind keystrokes).
+ * DOM-first draft textarea (uncontrolled).
+ * Keystrokes update the native value only — no React setState per char/backspace.
+ * Parent App re-renders (stream/tools) must not block typing; keep callbacks stable.
+ *
+ * onSync is intentional ref-only bookkeeping (cheap). onNonEmptyChange must also
+ * avoid App setState — parent should toggle send-button.disabled via DOM.
  */
 const ComposerDraftField = memo(
   forwardRef<
@@ -2277,56 +2291,87 @@ const ComposerDraftField = memo(
     },
     ref
   ) {
-    const [text, setText] = useState(initialValue);
     const taRef = useRef<HTMLTextAreaElement>(null);
     const lastKey = useRef<string | null>(null);
+    const lastNonEmpty = useRef(Boolean((initialValue || "").trim()));
     const onSyncRef = useRef(onSync);
     const onNonEmptyRef = useRef(onNonEmptyChange);
+    const onPasteRef = useRef(onPaste);
+    const onSubmitRef = useRef(onSubmit);
+    // Keep latest handlers without forcing re-renders when parent recreates lambdas.
     onSyncRef.current = onSync;
     onNonEmptyRef.current = onNonEmptyChange;
+    onPasteRef.current = onPaste;
+    onSubmitRef.current = onSubmit;
+
+    const notify = (v: string) => {
+      // Ref sync only — never setState here.
+      onSyncRef.current?.(v);
+      const ne = Boolean(v.trim());
+      if (ne !== lastNonEmpty.current) {
+        lastNonEmpty.current = ne;
+        onNonEmptyRef.current?.(ne);
+      }
+    };
 
     // Reset only when tab/project changes — not on every parent render / keystroke seed.
     useEffect(() => {
       if (lastKey.current === resetKey) return;
       lastKey.current = resetKey;
-      setText(initialValue || "");
-      onSyncRef.current?.(initialValue || "");
-      onNonEmptyRef.current?.(Boolean((initialValue || "").trim()));
+      const v = initialValue || "";
+      if (taRef.current) taRef.current.value = v;
+      lastNonEmpty.current = Boolean(v.trim());
+      onSyncRef.current?.(v);
+      onNonEmptyRef.current?.(lastNonEmpty.current);
     }, [resetKey, initialValue]);
 
-    useImperativeHandle(ref, () => ({
-      getValue: () => taRef.current?.value ?? text,
-      setValue: (v: string) => {
-        setText(v);
-        onSyncRef.current?.(v);
-        onNonEmptyRef.current?.(Boolean(v.trim()));
-      },
-      clear: () => {
-        setText("");
-        onSyncRef.current?.("");
-        onNonEmptyRef.current?.(false);
-      },
-      focus: () => taRef.current?.focus(),
-    }));
+    useImperativeHandle(
+      ref,
+      () => ({
+        getValue: () => taRef.current?.value ?? "",
+        setValue: (v: string) => {
+          if (taRef.current) taRef.current.value = v;
+          onSyncRef.current?.(v);
+          const ne = Boolean(v.trim());
+          if (ne !== lastNonEmpty.current) {
+            lastNonEmpty.current = ne;
+            onNonEmptyRef.current?.(ne);
+          } else {
+            // Same nonEmpty flag but value changed externally — still notify parent
+            // so send-button can stay correct if it only listens to nonEmpty edges.
+            onNonEmptyRef.current?.(ne);
+          }
+        },
+        clear: () => {
+          if (taRef.current) taRef.current.value = "";
+          onSyncRef.current?.("");
+          if (lastNonEmpty.current) {
+            lastNonEmpty.current = false;
+            onNonEmptyRef.current?.(false);
+          } else {
+            onNonEmptyRef.current?.(false);
+          }
+        },
+        focus: () => taRef.current?.focus(),
+      }),
+      []
+    );
 
     return (
       <textarea
         ref={taRef}
-        value={text}
+        defaultValue={initialValue}
         placeholder={placeholder}
         disabled={disabled}
-        onChange={(e) => {
-          const v = e.target.value;
-          setText(v);
-          onSyncRef.current?.(v);
-          // Parent only re-renders when empty ↔ non-empty (send button).
-          onNonEmptyRef.current?.(Boolean(v.trim()));
+        // Uncontrolled: do not pass value= — native DOM owns keystrokes.
+        onInput={(e) => {
+          notify(e.currentTarget.value);
         }}
-        onPaste={onPaste}
+        onPaste={(e) => onPasteRef.current?.(e)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
-            onSubmit?.();
+            onSubmitRef.current?.();
           }
         }}
       />
@@ -2477,6 +2522,8 @@ function effortLabel(id: string, raw?: string) {
   return /effort/i.test(pretty) ? pretty : `${pretty} Effort`;
 }
 
+const CHAT_BLOCK_PAGE_SIZE = 40;
+
 export function App() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [auth, setAuth] = useState<AuthStatus | null>(null);
@@ -2510,12 +2557,18 @@ export function App() {
   /** Cwd of the live ACP bridge (null if no agent process). */
   const [agentCwd, setAgentCwd] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
-  /** Send-button only: flips empty↔text without storing full draft in App state. */
-  const [draftNonEmpty, setDraftNonEmpty] = useState(false);
+  /**
+   * Draft non-empty flag lives in a ref — toggling must NOT setState on App
+   * (first/last keystroke used to re-render the whole shell). Send button
+   * disabled is patched via DOM in syncSendEnabled().
+   */
+  const draftNonEmptyRef = useRef(false);
+  const sendBtnRef = useRef<HTMLButtonElement | null>(null);
   /** Seed when switching tab/project (ComposerDraftField owns live keystrokes). */
   const [draftSeed, setDraftSeed] = useState("");
   const composerRef = useRef<ComposerDraftHandle | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const attachmentsLenRef = useRef(0);
   const [dragOver, setDragOver] = useState(false);
   const [permission, setPermission] = useState<PermissionRequest | null>(null);
   /** Codex-style split: primary Allow once + menu for Allow always */
@@ -2705,6 +2758,13 @@ export function App() {
   }, []);
 
   const chatRef = useRef<HTMLDivElement>(null);
+  const [visibleChatBlockCount, setVisibleChatBlockCount] = useState(
+    CHAT_BLOCK_PAGE_SIZE
+  );
+  const historyPrependRef = useRef<{
+    scrollHeight: number;
+    scrollTop: number;
+  } | null>(null);
   /** Stick chat to bottom unless user scrolls up to read history. */
   const stickToBottomRef = useRef(true);
   const scrollRafRef = useRef<number | null>(null);
@@ -2851,28 +2911,62 @@ export function App() {
     inputRef.current = v;
   }, []);
 
-  const onDraftNonEmpty = useCallback((nonEmpty: boolean) => {
-    setDraftNonEmpty((prev) => (prev === nonEmpty ? prev : nonEmpty));
+  /**
+   * Patch send-button.disabled without React setState.
+   * Reads live refs so stream re-renders and keystroke edges stay consistent.
+   */
+  const syncSendEnabled = useCallback(() => {
+    const btn = sendBtnRef.current;
+    if (!btn) return;
+    const ready = Boolean(btn.dataset.ready === "1");
+    const blocked = btn.dataset.blocked === "1";
+    const hasAttach = attachmentsLenRef.current > 0;
+    const hasDraft = draftNonEmptyRef.current;
+    btn.disabled = !ready || blocked || (!hasDraft && !hasAttach);
   }, []);
 
-  const setComposerText = useCallback((v: string) => {
-    inputRef.current = v;
-    setDraftSeed(v);
-    setDraftNonEmpty(Boolean(v.trim()));
-    composerRef.current?.setValue(v);
-  }, []);
+  const onDraftNonEmpty = useCallback(
+    (nonEmpty: boolean) => {
+      if (draftNonEmptyRef.current === nonEmpty) {
+        // Still refresh in case attachments/ready flags changed while focused.
+        syncSendEnabled();
+        return;
+      }
+      draftNonEmptyRef.current = nonEmpty;
+      syncSendEnabled();
+    },
+    [syncSendEnabled]
+  );
+
+  const setComposerText = useCallback(
+    (v: string) => {
+      inputRef.current = v;
+      setDraftSeed(v);
+      draftNonEmptyRef.current = Boolean(v.trim());
+      composerRef.current?.setValue(v);
+      syncSendEnabled();
+    },
+    [syncSendEnabled]
+  );
 
   const clearComposerText = useCallback(() => {
     inputRef.current = "";
     setDraftSeed("");
-    setDraftNonEmpty(false);
+    draftNonEmptyRef.current = false;
     composerRef.current?.clear();
-  }, []);
+    syncSendEnabled();
+  }, [syncSendEnabled]);
 
   const getComposerText = useCallback(
     () => composerRef.current?.getValue() ?? inputRef.current,
     []
   );
+
+  /** Stable submit handle — send() is recreated each App render; ref keeps composer memo-friendly. */
+  const sendFnRef = useRef<() => void | Promise<void>>(() => {});
+  const handleComposerSubmit = useCallback(() => {
+    void sendFnRef.current();
+  }, []);
 
   /** True only when the visible project+tab is the stream owner. */
   const isViewingOwnerTab = useCallback(() => {
@@ -2936,6 +3030,7 @@ export function App() {
    * Mutate the stream-owner transcript.
    * If user is viewing that tab → update UI; else persist in background.
    * Stream-heavy updates use startTransition so composer typing stays responsive.
+   * Even opts.urgent yields when the user is mid-keystroke in the composer.
    */
   const mutateOwnerItems = useCallback(
     (fn: (prev: ChatItem[]) => ChatItem[], opts?: { urgent?: boolean }) => {
@@ -2949,7 +3044,8 @@ export function App() {
       ownerItemsRef.current = next;
       if (isViewingOwnerTab()) {
         itemsRef.current = next;
-        if (opts?.urgent) {
+        const preferUrgent = Boolean(opts?.urgent) && !isTypingInComposer();
+        if (preferUrgent) {
           setItems(next);
         } else {
           startTransition(() => setItems(next));
@@ -3085,6 +3181,7 @@ export function App() {
   /**
    * Paint one stream kind immediately to DOM when bubble exists.
    * Returns true if DOM handled it (no React needed).
+   * Delta-append when text only grows — full textContent rewrite is O(n) per token.
    */
   const paintStreamChunkNow = useCallback(
     (kind: "assistant" | "thought") => {
@@ -3095,16 +3192,31 @@ export function App() {
       const idRef =
         kind === "assistant" ? streamAssistantIdRef.current : streamThoughtIdRef.current;
       if (!el || idRef !== buf.id) return false;
-      el.textContent = buf.text;
+      const next = buf.text;
+      const prev = el.textContent || "";
+      if (next === prev) {
+        /* no-op */
+      } else if (next.startsWith(prev)) {
+        // Fast path: only append the new suffix (common streaming case).
+        const suffix = next.slice(prev.length);
+        if (suffix) el.appendChild(document.createTextNode(suffix));
+      } else {
+        el.textContent = next;
+      }
       // Throttle ref bookkeeping — DOM already shows latest text.
+      // While typing, patch less often so main thread stays free for keystrokes.
+      const patchMs = isTypingInComposer() ? 280 : 120;
       if (streamPatchTimerRef.current == null) {
         streamPatchTimerRef.current = setTimeout(() => {
           streamPatchTimerRef.current = null;
           if (assistantBuf.current) silentPatchStreamText("assistant", assistantBuf.current);
           if (thoughtBuf.current) silentPatchStreamText("thought", thoughtBuf.current);
-        }, 120);
+        }, patchMs);
       }
-      scheduleStickScroll();
+      // Scrolling during keystrokes steals frames — defer until not typing.
+      if (!isTypingInComposer()) {
+        scheduleStickScroll();
+      }
       return true;
     },
     [silentPatchStreamText, scheduleStickScroll]
@@ -3475,17 +3587,23 @@ export function App() {
 
   // Autosave draft + transcript: debounced, silent (no React store rewrite).
   // While streaming, items state may stay still (DOM-only text) — poll itemsRef instead.
+  // Longer busy interval: JSON save of long transcripts competes with keystrokes on main/IPC.
   useEffect(() => {
     if (!projectPath) return;
+    const readDraft = () =>
+      composerRef.current?.getValue() ?? inputRef.current;
     if (busy) {
-      const tick = () =>
+      const tick = () => {
+        // JSON+IPC of long transcripts competes with keystrokes — skip while typing.
+        if (isTypingInComposer()) return;
         void persistActive(
           projectPath,
           itemsRef.current,
-          { draft: inputRef.current },
+          { draft: readDraft() },
           { syncUi: false }
         );
-      const id = window.setInterval(tick, 1600);
+      };
+      const id = window.setInterval(tick, 4000);
       return () => clearInterval(id);
     }
     const t = setTimeout(
@@ -3493,14 +3611,36 @@ export function App() {
         void persistActive(
           projectPath,
           itemsRef.current,
-          { draft: inputRef.current },
+          { draft: readDraft() },
           { syncUi: false }
         ),
-      600
+      900
     );
     return () => clearTimeout(t);
-  // Draft text lives in ComposerDraftField — only poll inputRef (no per-keystroke effect).
+  // Draft text lives in ComposerDraftField — only poll DOM/ref (no per-keystroke effect).
   }, [items, projectPath, persistActive, busy]);
+
+  // Idle draft-only typing does not change `items` — save draft on a slow poll so
+  // tab switch / crash still keeps unsent text without binding save to onInput.
+  // Never run the (large) JSON tab write while the user is mid-keystroke.
+  const lastSavedDraftRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!projectPath || busy) return;
+    const id = window.setInterval(() => {
+      if (isTypingInComposer()) return;
+      const draft = composerRef.current?.getValue() ?? inputRef.current;
+      if (draft === lastSavedDraftRef.current) return;
+      lastSavedDraftRef.current = draft;
+      inputRef.current = draft;
+      void persistActive(
+        projectPath,
+        itemsRef.current,
+        { draft },
+        { syncUi: false }
+      );
+    }, 8000);
+    return () => clearInterval(id);
+  }, [projectPath, busy, persistActive]);
 
   const refreshAuth = useCallback(async () => {
     const next = await window.grokApp.getAuth();
@@ -4655,7 +4795,10 @@ export function App() {
           streamThoughtIdxRef.current = -1;
           hadToolsThisTurn.current = true;
           const t = formatTool(update);
-          mutateOwnerItems((prev) => upsertToolItem(prev, t), { urgent: true });
+          // While user is typing in composer, prefer transition so keystrokes stay snappy.
+          mutateOwnerItems((prev) => upsertToolItem(prev, t), {
+            urgent: !isTypingInComposer(),
+          });
         }
       }),
       window.grokApp.on("agent:permission", (data: any) => {
@@ -5568,7 +5711,7 @@ export function App() {
         push({
           id: uid(),
           kind: "system",
-          text: `Grok Build v${appVersion?.version || "?"} — desktop shell cho Grok CLI (UI kiểu Codex, runtime xAI).`,
+          text: `Grok Build v${appVersion?.version || "?"} — desktop shell cho Grok CLI (xAI).`,
         });
       }),
     ];
@@ -6501,6 +6644,7 @@ export function App() {
     setAttachments([]);
     await runAgentPrompt(payload);
   };
+  sendFnRef.current = send;
 
   const mapChatItems = (mapFn: (prev: ChatItem[]) => ChatItem[]) => {
     if (busyRef.current && isViewingOwnerTab()) {
@@ -7029,6 +7173,79 @@ export function App() {
     [items, liveChatTurn, busy, turnStartedAt]
   );
 
+  const composerResetKey = `${projectPath || ""}::${store?.activeTabId || "none"}`;
+  const visibleChatTurnBlocks = useMemo(
+    () => chatTurnBlocks.slice(-visibleChatBlockCount),
+    [chatTurnBlocks, visibleChatBlockCount]
+  );
+  const hiddenChatBlockCount = Math.max(
+    0,
+    chatTurnBlocks.length - visibleChatTurnBlocks.length
+  );
+
+  useEffect(() => {
+    historyPrependRef.current = null;
+    setVisibleChatBlockCount(CHAT_BLOCK_PAGE_SIZE);
+  }, [composerResetKey]);
+
+  const loadOlderChatBlocks = useCallback(() => {
+    const el = chatRef.current;
+    if (el) {
+      historyPrependRef.current = {
+        scrollHeight: el.scrollHeight,
+        scrollTop: el.scrollTop,
+      };
+    }
+    stickToBottomRef.current = false;
+    setVisibleChatBlockCount((count) =>
+      Math.min(chatTurnBlocks.length, count + CHAT_BLOCK_PAGE_SIZE)
+    );
+  }, [chatTurnBlocks.length]);
+
+  useLayoutEffect(() => {
+    const snapshot = historyPrependRef.current;
+    const el = chatRef.current;
+    if (!snapshot || !el) return;
+    historyPrependRef.current = null;
+    el.scrollTop =
+      snapshot.scrollTop + el.scrollHeight - snapshot.scrollHeight;
+  }, [visibleChatBlockCount]);
+  const composerPlaceholder = useMemo(() => {
+    if (canFollowUpWhileBusy) {
+      return messageQueueEnabled
+        ? "Yêu cầu thay đổi tiếp theo…"
+        : "Gửi sẽ steal (dừng turn + chạy prompt mới)…";
+    }
+    if (isStandaloneMode) return "Hỏi bất cứ điều gì (không cần project)…";
+    if (projectPath) return "Làm bất cứ điều gì…";
+    return "Tác vụ mới hoặc mở project để chat…";
+  }, [
+    canFollowUpWhileBusy,
+    messageQueueEnabled,
+    isStandaloneMode,
+    projectPath,
+  ]);
+  const composerDisabled =
+    !projectPath || (busy && !canFollowUpWhileBusy);
+
+  // Keep send-button.disabled in sync without draftNonEmpty React state.
+  // data-* attrs + attachments length change on App re-render; keystrokes patch via DOM.
+  useLayoutEffect(() => {
+    attachmentsLenRef.current = attachments.length;
+    const btn = sendBtnRef.current;
+    if (btn) {
+      btn.dataset.ready = agentReadyHere ? "1" : "0";
+      btn.dataset.blocked = busy && !canFollowUpWhileBusy ? "1" : "0";
+    }
+    syncSendEnabled();
+  }, [
+    attachments.length,
+    agentReadyHere,
+    busy,
+    canFollowUpWhileBusy,
+    syncSendEnabled,
+  ]);
+
   return (
     <div className={`shell ${isDarwin ? "is-darwin" : "is-win"}`}>
       {/* Hybrid titlebar: sidebar toggle · Tệp · Chỉnh sửa · Xem · Trợ giúp + drag · native caption only */}
@@ -7142,7 +7359,7 @@ export function App() {
           <button
             type="button"
             className="side-nav-item muted"
-            title="Browser panel kiểu Codex chưa có — dùng web_search qua agent"
+            title="Chưa có panel browser — dùng web_search qua agent"
           >
             <span className="nav-ico">
               <IconBrowser size={16} />
@@ -7901,7 +8118,7 @@ export function App() {
                         push({
                           id: uid(),
                           kind: "system",
-                          text: `Grok Build v${appVersion?.version || "?"} — desktop shell cho Grok CLI (UI kiểu Codex, runtime xAI).`,
+                          text: `Grok Build v${appVersion?.version || "?"} — desktop shell cho Grok CLI (xAI).`,
                         });
                       }}
                     >
@@ -8152,7 +8369,17 @@ export function App() {
               )}
             </div>
           ) : (
-            chatTurnBlocks.map((block) => {
+            <>
+              {hiddenChatBlockCount > 0 && (
+                <button
+                  type="button"
+                  className="ghost chat-history-more"
+                  onClick={loadOlderChatBlocks}
+                >
+                  Tải tin nhắn cũ hơn ({hiddenChatBlockCount})
+                </button>
+              )}
+              {visibleChatTurnBlocks.map((block) => {
               if (block.type === "user") {
                 const it = block.item;
                 return (
@@ -8692,7 +8919,8 @@ export function App() {
                   {"text" in it && it.text ? <div className="body">{it.text}</div> : null}
                 </div>
               );
-            })
+              })}
+            </>
           )}
         </div>
 
@@ -8946,24 +9174,14 @@ export function App() {
             )}
             <ComposerDraftField
               ref={composerRef}
-              resetKey={`${projectPath}::${store?.activeTabId || "none"}`}
+              resetKey={composerResetKey}
               initialValue={draftSeed}
-              placeholder={
-                canFollowUpWhileBusy
-                  ? messageQueueEnabled
-                    ? "Yêu cầu thay đổi tiếp theo…"
-                    : "Gửi sẽ steal (dừng turn + chạy prompt mới)…"
-                  : isStandaloneMode
-                    ? "Hỏi bất cứ điều gì (không cần project)…"
-                    : projectPath
-                      ? "Làm bất cứ điều gì…"
-                      : "Tác vụ mới hoặc mở project để chat…"
-              }
-              disabled={!projectPath || (busy && !canFollowUpWhileBusy)}
+              placeholder={composerPlaceholder}
+              disabled={composerDisabled}
               onSync={syncComposerDraft}
               onNonEmptyChange={onDraftNonEmpty}
-              onPaste={(e) => void onComposerPaste(e)}
-              onSubmit={() => void send()}
+              onPaste={onComposerPaste}
+              onSubmit={handleComposerSubmit}
             />
             <input
               ref={fileInputRef}
@@ -9143,10 +9361,13 @@ export function App() {
                 </button>
                 <button
                   type="button"
+                  ref={sendBtnRef}
                   className="primary send-btn"
+                  data-ready={agentReadyHere ? "1" : "0"}
+                  data-blocked={busy && !canFollowUpWhileBusy ? "1" : "0"}
                   disabled={
                     !agentReadyHere ||
-                    (!draftNonEmpty && attachments.length === 0) ||
+                    (!draftNonEmptyRef.current && attachments.length === 0) ||
                     (busy && !canFollowUpWhileBusy)
                   }
                   onClick={send}
@@ -9177,7 +9398,7 @@ export function App() {
           <div className="bottom-panel-head">
             <div className="bottom-panel-title">
               <strong>Terminal / Activity</strong>
-              <span className="hint">Ctrl+J · PTY embed chưa có — dùng terminal ngoài</span>
+              <span className="hint">Ctrl+J · Mở terminal ngoài</span>
             </div>
             <div className="row">
               <button
@@ -10942,10 +11163,6 @@ export function App() {
                       <option value="powershell">PowerShell</option>
                       <option value="cmd">cmd</option>
                     </select>
-                    <p className="hint settings-hint">
-                      PTY embed trong app: chưa (dùng Terminal ngoài / Ctrl+`). Embed browser Codex /
-                      plugin store: không.
-                    </p>
                   </>
                 )}
                 {settingsTab === "quyen" && (
@@ -10953,10 +11170,7 @@ export function App() {
                     <label className="check settings-toggle">
                       <div>
                         <strong>Quyền mặc định</strong>
-                        <p>
-                          Agent xin approve từng tool nguy hiểm (shell, ghi file…). Composer chip
-                          “Yêu cầu phê duyệt” / “Luôn cho phép” cũng đổi setting này.
-                        </p>
+                        <p>Hỏi trước khi agent chạy tool nguy hiểm (shell, ghi file…).</p>
                       </div>
                       <input
                         type="checkbox"
@@ -10968,11 +11182,8 @@ export function App() {
                     </label>
                     <label className="check settings-toggle">
                       <div>
-                        <strong>Luôn cho phép (full-ish)</strong>
-                        <p>
-                          Auto-approve tools lúc start agent (--always-approve). Tăng rủi ro. Không
-                          có “phê duyệt giúp tôi” hay config.toml kiểu Codex.
-                        </p>
+                        <strong>Luôn cho phép</strong>
+                        <p>Tự duyệt mọi tool. Nhanh hơn, rủi ro cao hơn.</p>
                       </div>
                       <input
                         type="checkbox"
@@ -10984,8 +11195,8 @@ export function App() {
                     </label>
                     <label className="check settings-toggle">
                       <div>
-                        <strong>Post-task checklist</strong>
-                        <p>Hiện checklist harness sau mỗi turn có tool (Verify / Record / Privacy).</p>
+                        <strong>Checklist sau lượt</strong>
+                        <p>Hiện checklist sau mỗi lượt có tool.</p>
                       </div>
                       <input
                         type="checkbox"
@@ -10997,13 +11208,8 @@ export function App() {
                     </label>
                     <label className="check settings-toggle">
                       <div>
-                        <strong>Báo cáo cuối phiên</strong>
-                        <p>
-                          Sau mỗi lượt agent: một thẻ “Đã chạy xong · thời gian” (không lặp
-                          theo từng cụm tool); nếu có sửa file thì hiện danh sách đường dẫn
-                          + dòng thêm/xóa (Codex-style) và nút Xem xét mở panel Diff.
-                          Các cụm tool giữa chừng hiện “Đã chạy các lệnh”. Toast in-app luôn hiện.
-                        </p>
+                        <strong>Báo cáo cuối lượt</strong>
+                        <p>Thẻ tóm tắt thời gian + file đã sửa, kèm nút xem Diff.</p>
                       </div>
                       <input
                         type="checkbox"
@@ -11015,11 +11221,8 @@ export function App() {
                     </label>
                     <label className="check settings-toggle">
                       <div>
-                        <strong>Thông báo Windows (nền)</strong>
-                        <p>
-                          OS notification khi lượt agent kết thúc mà cửa sổ đang ẩn. Toast
-                          trong app vẫn hiện kể cả khi bạn đang nhìn màn hình.
-                        </p>
+                        <strong>Thông báo Windows</strong>
+                        <p>Báo hệ thống khi agent xong lúc app đang ẩn.</p>
                       </div>
                       <input
                         type="checkbox"
@@ -11034,11 +11237,10 @@ export function App() {
                     </label>
                     <label className="check settings-toggle">
                       <div>
-                        <strong>Hàng đợi tin nhắn (queue)</strong>
+                        <strong>Hàng đợi tin nhắn</strong>
                         <p>
-                          Khi agent đang chạy trên tab hiện tại: tin mới xếp hàng (Codex-style). Tắt =
-                          gửi sẽ <strong>steal</strong> (dừng turn + chạy prompt mới). Không đè IPC
-                          agent:prompt.
+                          Agent đang chạy → tin mới xếp hàng. Tắt → dừng lượt hiện tại và chạy tin
+                          mới ngay.
                         </p>
                       </div>
                       <input
@@ -11054,8 +11256,8 @@ export function App() {
                     </label>
                     <label className="check settings-toggle">
                       <div>
-                        <strong>Privacy banner</strong>
-                        <p>Nhắc không commit .agents/ / MEMORY khi mở project harness.</p>
+                        <strong>Cảnh báo privacy</strong>
+                        <p>Nhắc không commit .agents/ và MEMORY khi mở project.</p>
                       </div>
                       <input
                         type="checkbox"
@@ -11070,9 +11272,8 @@ export function App() {
                 {settingsTab === "phimtat" && (
                   <>
                     <p className="hint settings-hint">
-                      Phím tắt đang có trong app (read-only). Chỉ action Grok Build thật sự hỗ trợ.
-                      Mở nhanh: <kbd>Ctrl+Shift+/</kbd> hoặc <strong>?</strong> → Phím tắt. Rebind
-                      tùy chỉnh: chưa (phase 2).
+                      Danh sách phím tắt hiện có (chưa đổi được). Mở nhanh:{" "}
+                      <kbd>Ctrl+Shift+/</kbd> hoặc <strong>?</strong>.
                     </p>
                     <input
                       type="search"
@@ -11134,17 +11335,16 @@ export function App() {
                 {settingsTab === "agent" && (
                   <>
                     <p className="hint">
-                      Runtime: Grok CLI / ACP. MCP inject qua <code>session/new</code> khi bật bên
-                      dưới. Cần Chrome + Node/npx. Đổi MCP → Lưu rồi <strong>Khởi động lại</strong>{" "}
-                      agent.
+                      Bật MCP bên dưới để agent dùng tool ngoài. Cần Chrome + Node/npx. Đổi MCP →
+                      Lưu rồi <strong>Khởi động lại</strong> agent.
                     </p>
 
                     <label className="check settings-toggle">
                       <div>
                         <strong>Chrome DevTools MCP</strong>
                         <p>
-                          Inject <code>chrome-devtools-mcp</code> — agent có thể mở Chrome, screenshot,
-                          console, network, performance. Opt-in; quyền browser lớn.
+                          Agent điều khiển Chrome (mở trang, screenshot, console…). Quyền browser lớn
+                          — opt-in.
                         </p>
                       </div>
                       <input
@@ -11161,7 +11361,7 @@ export function App() {
                         <label className="check settings-toggle">
                           <div>
                             <strong>Headless</strong>
-                            <p>Chạy Chrome không hiện cửa sổ (phù hợp CI / verify nhanh).</p>
+                            <p>Chrome không hiện cửa sổ.</p>
                           </div>
                           <input
                             type="checkbox"
@@ -11177,7 +11377,7 @@ export function App() {
                         <label className="check settings-toggle">
                           <div>
                             <strong>Slim tools</strong>
-                            <p>Chỉ nav + screenshot + evaluate — ít tool, tốn context ít hơn.</p>
+                            <p>Chỉ điều hướng, screenshot, evaluate — ít tốn context hơn.</p>
                           </div>
                           <input
                             type="checkbox"
@@ -11193,7 +11393,7 @@ export function App() {
                         <label className="check settings-toggle">
                           <div>
                             <strong>Isolated profile</strong>
-                            <p>Profile Chrome tạm, dọn sau khi đóng (không dùng profile MCP mặc định).</p>
+                            <p>Profile Chrome tạm, xóa khi đóng.</p>
                           </div>
                           <input
                             type="checkbox"
@@ -11209,9 +11409,7 @@ export function App() {
                         <label className="check settings-toggle">
                           <div>
                             <strong>Tắt usage statistics</strong>
-                            <p>
-                              Opt-out telemetry Google của chrome-devtools-mcp (khuyến nghị bật).
-                            </p>
+                            <p>Không gửi telemetry của Chrome DevTools MCP.</p>
                           </div>
                           <input
                             type="checkbox"
@@ -11251,17 +11449,6 @@ export function App() {
                         />
                       </div>
                     )}
-
-                    <ul className="settings-list">
-                      <li>Chat + stream + tool timeline — có</li>
-                      <li>Diff / file tree / preview — có</li>
-                      <li>Chrome DevTools MCP (opt-in) — có</li>
-                      <li>Harness runbooks + checklist + privacy — có</li>
-                      <li>Git branch / status / worktrees — có</li>
-                      <li>Terminal ngoài (không PTY embed) — có</li>
-                      <li>Usage credits + token log — có (khác metric Codex)</li>
-                      <li>Plugin ChatGPT / Evaluate / Cloud sandbox — không</li>
-                    </ul>
                   </>
                 )}
                 <div className="actions">

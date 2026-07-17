@@ -78,7 +78,7 @@ $stagedCount = @(git diff --cached --name-only).Count
 if ($stagedCount -eq 0) {
   Write-Host "Nothing staged. Checking if local is ahead of origin..."
 } else {
-  $ver = "0.1.6"
+  $ver = "0.1.7"
   try {
     $pj = Get-Content package.json -Raw | ConvertFrom-Json
     if ($pj.version) { $ver = $pj.version }
