@@ -51,6 +51,39 @@ function projectDir(projectPath) {
   return path.join(sessionsRoot(), projectKey(projectPath));
 }
 
+function renameProjectSession(oldProjectPath, newProjectPath) {
+  const oldDir = projectDir(oldProjectPath);
+  const newDir = projectDir(newProjectPath);
+  if (oldDir === newDir) return { moved: false };
+  if (!fs.existsSync(oldDir)) {
+    if (fs.existsSync(newDir)) {
+      throw new Error("Project m\u1edbi \u0111\u00e3 c\u00f3 l\u1ecbch s\u1eed chat kh\u00e1c.");
+    }
+    return { moved: false };
+  }
+  if (fs.existsSync(newDir)) {
+    throw new Error("Project m\u1edbi \u0111\u00e3 c\u00f3 l\u1ecbch s\u1eed chat kh\u00e1c.");
+  }
+  fs.mkdirSync(sessionsRoot(), { recursive: true });
+  fs.renameSync(oldDir, newDir);
+  const storeFile = path.join(newDir, "store.json");
+  try {
+    if (fs.existsSync(storeFile)) {
+      const store = JSON.parse(fs.readFileSync(storeFile, "utf8"));
+      store.projectPath = path.resolve(newProjectPath);
+      fs.writeFileSync(storeFile, JSON.stringify(store, null, 2), "utf8");
+    }
+  } catch (err) {
+    try {
+      fs.renameSync(newDir, oldDir);
+    } catch {
+      /* preserve the original error; the caller reports the failed rename */
+    }
+    throw err;
+  }
+  return { moved: true };
+}
+
 function storePath(projectPath) {
   return path.join(projectDir(projectPath), "store.json");
 }
@@ -261,6 +294,7 @@ function listProjectSessions() {
 
 module.exports = {
   projectKey,
+  renameProjectSession,
   loadStore,
   saveStore,
   loadProjectSession,

@@ -1,6 +1,6 @@
 {
   "name": "grok-build-app",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "description": "Desktop shell for Grok Build — project picker, ACP chat, harness-aware UI",
   "main": "electron/main.cjs",
@@ -35,6 +35,7 @@
     "fix:idb-bloat": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/fix-grok-indexeddb-bloat.ps1",
     "fix:idb-bloat:clean-only": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/fix-grok-indexeddb-bloat.ps1 -SkipRestart",
     "smoke:ui": "node ./scripts/smoke-ui.cjs",
+    "test:project-management": "node ./scripts/project-management-smoke.cjs",
     "release:checklist": "node ./scripts/release-checklist.cjs"
   },
   "dependencies": {

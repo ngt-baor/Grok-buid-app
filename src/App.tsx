@@ -610,6 +610,22 @@ function nowIso() {
 function projectName(p: string) {
   return p.split(/[/\\]/).filter(Boolean).pop() || p;
 }
+function projectParentName(p: string) {
+  const parts = p.split(/[/\\]/).filter(Boolean);
+  return parts.length > 1 ? parts[parts.length - 2] : "";
+}
+function projectDisplayName(p: string, peers: string[]) {
+  const base = projectName(p);
+  const sameName = peers.filter(
+    (peer) => projectName(peer).toLowerCase() === base.toLowerCase()
+  );
+  if (sameName.length <= 1) return base;
+  const parent = projectParentName(p);
+  const sameParent = sameName.filter(
+    (peer) => projectParentName(peer).toLowerCase() === parent.toLowerCase()
+  );
+  return sameParent.length <= 1 ? `${base} \u00b7 ${parent || p}` : `${base} \u00b7 ${p}`;
+}
 
 /** Windows-safe project path compare (trim trailing slash, case-insensitive). */
 function pathsEqual(a?: string | null, b?: string | null): boolean {
@@ -2618,6 +2634,7 @@ export function App() {
     Record<string, PinnedTabEntry[]>
   >(() => migratePinnedTabs(readStoredJson(LS_PINNED_TABS, {})));
   const [projectMenuPath, setProjectMenuPath] = useState<string | null>(null);
+  const [chatMenuOpen, setChatMenuOpen] = useState<{ projectPath: string; tabId: string } | null>(null);
   const [projectsSortMenuOpen, setProjectsSortMenuOpen] = useState(false);
   /** Codex-style ? help menu + dedicated shortcuts modal (not full Settings). */
   const [helpMenuOpen, setHelpMenuOpen] = useState(false);
@@ -2704,6 +2721,17 @@ export function App() {
   const [checklistChecked, setChecklistChecked] = useState<Record<string, boolean>>({});
   /** In-app confirm (replaces native window.confirm for recent-project remove). */
   const [removeRecentConfirm, setRemoveRecentConfirm] = useState<string | null>(null);
+  const [renameProjectModal, setRenameProjectModal] = useState<{
+    path: string;
+    name: string;
+    error?: string;
+  } | null>(null);
+  const [renameTabModal, setRenameTabModal] = useState<{
+    projectPath: string;
+    tabId: string;
+    name: string;
+    error?: string;
+  } | null>(null);
   /** In-app confirm before closing a chat tab (replaces native window.confirm). */
   const [closeTabConfirm, setCloseTabConfirm] = useState<{
     tabId: string;
@@ -5078,6 +5106,11 @@ export function App() {
           e.preventDefault();
           setPermModeMenuOpen(false);
           return;
+        if (chatMenuOpen) {
+          e.preventDefault();
+          setChatMenuOpen(null);
+          return;
+        }
         }
         if (permAllowMenuOpen) {
           e.preventDefault();
@@ -5108,6 +5141,16 @@ export function App() {
         if (removeRecentConfirm) {
           e.preventDefault();
           setRemoveRecentConfirm(null);
+          return;
+        }
+        if (renameTabModal) {
+          e.preventDefault();
+          setRenameTabModal(null);
+          return;
+        }
+        if (renameProjectModal) {
+          e.preventDefault();
+          setRenameProjectModal(null);
           return;
         }
         if (closeTabConfirm) {
@@ -5303,6 +5346,9 @@ export function App() {
     closeImageLightbox,
     nudgeLightboxZoom,
     removeRecentConfirm,
+    renameProjectModal,
+    renameTabModal,
+    chatMenuOpen,
     closeTabConfirm,
     permission,
     permModeMenuOpen,
@@ -5387,6 +5433,75 @@ export function App() {
   const removeRecent = (p: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setRemoveRecentConfirm(p);
+  };
+
+  const requestRenameProject = (p: string) => {
+    setProjectMenuPath(null);
+    setRenameProjectModal({ path: p, name: projectName(p) });
+  };
+
+  const executeRenameProject = async () => {
+    const conf = renameProjectModal;
+    if (!conf) return;
+    const nextName = conf.name.trim();
+    if (
+      !nextName ||
+      nextName === "." ||
+      nextName === ".." ||
+      /^[. ]+$/.test(nextName) ||
+      /[<>:"/\\|?*\u0000-\u001f]/.test(nextName)
+    ) {
+      setRenameProjectModal({ ...conf, error: "\u0054\u00ean project kh\u00f4ng h\u1ee3p l\u1ec7." });
+      return;
+    }
+    if (nextName.length > 180) {
+      setRenameProjectModal({ ...conf, error: "\u0054\u00ean project qu\u00e1 d\u00e0i." });
+      return;
+    }
+    if (nextName.toLowerCase() === projectName(conf.path).toLowerCase()) {
+      setRenameProjectModal(null);
+      return;
+    }
+
+    const active = pathsEqual(projectRef.current, conf.path);
+    if (busyRef.current && pathsEqual(busyProjectPathRef.current, conf.path)) {
+      setRenameProjectModal({
+        ...conf,
+        error: "H\u00e3y d\u1eebng agent c\u1ee7a project tr\u01b0\u1edbc khi \u0111\u1ed5i t\u00ean.",
+      });
+      return;
+    }
+
+    try {
+      if (active && agentReady) await stopAgent();
+      const bundle = await window.grokApp.renameProject(conf.path, nextName);
+      setPinnedProjects((prev) => {
+        const next = prev.map((p) => (pathsEqual(p, conf.path) ? bundle.path : p));
+        writeStoredJson(LS_PINNED_PROJECTS, next);
+        return next;
+      });
+      setPinnedTabsByProject((prev) => {
+        const oldKey = Object.keys(prev).find((key) => pathsEqual(key, conf.path));
+        if (!oldKey) return prev;
+        const next = { ...prev, [bundle.path]: prev[oldKey] };
+        delete next[oldKey];
+        writeStoredJson(LS_PINNED_TABS, next);
+        return next;
+      });
+      setRenameProjectModal(null);
+      if (active) {
+        // Prevent applyProject from persisting the old path after the folder moved.
+        projectRef.current = bundle.path;
+        await applyProject(bundle);
+      } else {
+        setSettings(bundle.settings);
+      }
+    } catch (err: any) {
+      setRenameProjectModal({
+        ...conf,
+        error: String(err?.message || err || "Kh\u00f4ng \u0111\u1ed5i t\u00ean \u0111\u01b0\u1ee3c project."),
+      });
+    }
   };
 
   const executeRemoveRecent = async (p: string) => {
@@ -5540,6 +5655,7 @@ export function App() {
       if (!(t instanceof Element)) return;
       if (t.closest(".perm-mode-wrap")) return;
       setPermModeMenuOpen(false);
+      setChatMenuOpen(null);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
@@ -5547,12 +5663,13 @@ export function App() {
 
   // Close project / sort / help menus on outside click
   useEffect(() => {
-    if (!projectMenuPath && !projectsSortMenuOpen && !helpMenuOpen) return;
+    if (!projectMenuPath && !projectsSortMenuOpen && !helpMenuOpen && !chatMenuOpen) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target;
       if (!(t instanceof Element)) return;
       if (
         t.closest(".project-menu-wrap") ||
+        t.closest(".chat-menu-wrap") ||
         t.closest(".projects-sort-wrap") ||
         t.closest(".help-menu-wrap")
       )
@@ -5563,7 +5680,7 @@ export function App() {
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [projectMenuPath, projectsSortMenuOpen, helpMenuOpen]);
+  }, [projectMenuPath, projectsSortMenuOpen, helpMenuOpen, chatMenuOpen]);
 
   const openShortcutsPanel = useCallback(() => {
     setHelpMenuOpen(false);
@@ -5627,16 +5744,24 @@ export function App() {
    * No project open → open standalone (chat không project) then create tab.
    * forceStandalone → always create under “Tác vụ”, even if a project is active.
    */
-  const newTab = async (opts?: { forceStandalone?: boolean }) => {
-    let path = projectPath;
+  const newTab = async (opts?: { forceStandalone?: boolean; projectPath?: string }) => {
+    const beforePath = projectRef.current || projectPath;
+    let path = opts?.projectPath || beforePath;
+    let switchedWorkspace = false;
+    if (opts?.projectPath && !pathsEqual(beforePath, opts.projectPath)) {
+      await applyProject(await window.grokApp.openProject(opts.projectPath));
+      path = opts.projectPath;
+      switchedWorkspace = true;
+    }
     if (opts?.forceStandalone || !path) {
       if (!path || !standalonePath || !pathsEqual(path, standalonePath)) {
         path = await openStandaloneWorkspace();
+        switchedWorkspace = !pathsEqual(beforePath, path);
       }
     }
     if (!path) return;
     // Keep background turn running — only save current view
-    const leavingId = store?.activeTabId;
+    const leavingId = storeRef.current?.activeTabId;
     const leavingOwner =
       busyRef.current &&
       leavingId &&
@@ -5647,8 +5772,8 @@ export function App() {
       await persistTab(path, leavingId!, itemsRef.current, {
         draft: getComposerText(),
       });
-    } else if (projectPath) {
-      await persistActive(projectPath, items, { draft: getComposerText() });
+    } else if (!switchedWorkspace && projectRef.current) {
+      await persistActive(projectRef.current, itemsRef.current, { draft: getComposerText() });
     }
     const next = await window.grokApp.createTab(path, { model, reasoningEffort: effort });
     setStore(next);
@@ -5772,6 +5897,32 @@ export function App() {
     }
   };
 
+  const requestCloseTab = (
+    tabId: string,
+    path: string,
+    mode: "active" | "standalone-list",
+    titleOverride?: string
+  ) => {
+    if (!path) return;
+    const sourceStore =
+      mode === "standalone-list" ? standaloneStore || storeRef.current : storeRef.current;
+    const title =
+      titleOverride ||
+      sourceStore?.tabs.find((t) => t.id === tabId)?.title ||
+      "Chat";
+    const onBusyProject = pathsEqual(busyProjectPathRef.current, path);
+    const isOwnerRunning =
+      !!busyRef.current &&
+      onBusyProject &&
+      tabId === boundTabIdRef.current;
+    setCloseTabConfirm({
+      tabId,
+      title,
+      running: isOwnerRunning,
+      projectPath: path,
+      mode,
+    });
+  };
   const onCloseTab = (tabId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const path = projectRef.current || projectPath;
@@ -6865,6 +7016,130 @@ export function App() {
     []
   );
 
+  const requestRenameTab = (projectPath: string, tabId: string, title: string) => {
+    setChatMenuOpen(null);
+    setRenameTabModal({
+      projectPath,
+      tabId,
+      name: title.trim() || t("chat.renamePlaceholder"),
+    });
+  };
+
+  const executeRenameTab = async () => {
+    const conf = renameTabModal;
+    if (!conf) return;
+    const nextName = conf.name.replace(/\s+/g, " ").trim();
+    if (!nextName) {
+      setRenameTabModal((cur) => (cur ? { ...cur, error: t("chat.renameEmpty") } : cur));
+      return;
+    }
+    if (nextName.length > 120) {
+      setRenameTabModal((cur) => (cur ? { ...cur, error: t("chat.renameTooLong") } : cur));
+      return;
+    }
+    try {
+      const next = await window.grokApp.saveTab(conf.projectPath, conf.tabId, {
+        title: nextName,
+      });
+      if (standalonePath && pathsEqual(conf.projectPath, standalonePath)) {
+        setStandaloneStore(next);
+      }
+      if (projectRef.current && pathsEqual(projectRef.current, conf.projectPath)) {
+        setStore(next);
+        storeRef.current = next;
+      }
+      setPinnedTabsByProject((prev) => {
+        const key = Object.keys(prev).find((k) => pathsEqual(k, conf.projectPath));
+        if (!key) return prev;
+        const nextPinned = {
+          ...prev,
+          [key]: prev[key].map((entry) =>
+            entry.id === conf.tabId ? { ...entry, title: nextName } : entry
+          ),
+        };
+        writeStoredJson(LS_PINNED_TABS, nextPinned);
+        return nextPinned;
+      });
+      setRenameTabModal(null);
+    } catch (err) {
+      setRenameTabModal((cur) =>
+        cur
+          ? { ...cur, error: String((err as any)?.message || err || t("common.error")) }
+          : cur
+      );
+    }
+  };
+
+  const isChatMenuOpen = (projectPath: string, tabId: string) =>
+    Boolean(
+      chatMenuOpen &&
+        chatMenuOpen.tabId === tabId &&
+        pathsEqual(chatMenuOpen.projectPath, projectPath)
+    );
+
+  const renderChatMenu = (
+    projectPath: string,
+    tabId: string,
+    title: string,
+    pinned: boolean,
+    mode: "active" | "standalone-list"
+  ) => {
+    const menuOpen = isChatMenuOpen(projectPath, tabId);
+    return (
+      <div className="chat-menu-wrap" onClick={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          className="ghost icon session-more"
+          title={t("chat.menu")}
+          aria-label={t("chat.menu")}
+          aria-expanded={menuOpen}
+          onClick={() => {
+            setProjectMenuPath(null);
+            setChatMenuOpen((current) =>
+              current && current.tabId === tabId && pathsEqual(current.projectPath, projectPath)
+                ? null
+                : { projectPath, tabId }
+            );
+          }}
+        >
+          <IconMore size={14} />
+        </button>
+        {menuOpen && (
+          <div className="sidebar-ctx-menu chat-ctx-menu" role="menu">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => requestRenameTab(projectPath, tabId, title)}
+            >
+              {t("chat.rename")}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setChatMenuOpen(null);
+                togglePinTab(projectPath, tabId, title);
+              }}
+            >
+              {pinned ? t("chat.unpin") : t("chat.pin")}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="danger"
+              onClick={() => {
+                setChatMenuOpen(null);
+                requestCloseTab(tabId, projectPath, mode, title);
+              }}
+            >
+              {t("chat.delete")}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const isTabPinned = useCallback(
     (project: string | null | undefined, tabId: string) =>
       pinnedTabIdsFor(project).includes(tabId),
@@ -7112,7 +7387,7 @@ export function App() {
     for (const p of settings?.recentProjects || []) {
       cmds.push({
         id: `proj-${p}`,
-        label: `Open project: ${projectName(p)}`,
+        label: `Open project: ${projectDisplayName(p, settings?.recentProjects || [])}`,
         hint: p,
         run: () => void openRecent(p),
       });
@@ -7444,7 +7719,7 @@ export function App() {
                           </span>
                         )}
                         <span className="session-title">
-                          {projectName(item.path)}
+                          {projectDisplayName(item.path, sidebarProjects)}
                         </span>
                         {waiting && (
                           <span className="session-status-badge waiting">
@@ -7638,7 +7913,7 @@ export function App() {
                       <span className="folder-ico" aria-hidden>
                         <IconFolder size={15} />
                       </span>
-                      <span className="project-name-text">{projectName(p)}</span>
+                      <span className="project-name-text">{projectDisplayName(p, sidebarProjects)}</span>
                       {pinned && (
                         <span className="pin-mark" title="Đã ghim" aria-label="Đã ghim">
                           📌
@@ -7660,6 +7935,20 @@ export function App() {
                       ) : null}
                     </div>
                   </button>
+                  {!active && (
+                    <button
+                      type="button"
+                      className="ghost icon project-new-chat"
+                      title={"\u0054\u1ea1o cu\u1ed9c tr\u00f2 chuy\u1ec7n trong project n\u00e0y"}
+                      aria-label={"\u0054\u1ea1o cu\u1ed9c tr\u00f2 chuy\u1ec7n trong project n\u00e0y"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void newTab({ projectPath: p });
+                      }}
+                    >
+                      <IconPlus size={14} />
+                    </button>
+                  )}
                   <div className="project-menu-wrap">
                     <button
                       type="button"
@@ -7686,6 +7975,13 @@ export function App() {
                         >
                           {pinned ? "Bỏ ghim dự án" : "Ghim dự án"}
                         </button>
+                         <button
+                           type="button"
+                           role="menuitem"
+                           onClick={() => requestRenameProject(p)}
+                         >
+                           {"\u0110\u1ed5i t\u00ean project"}
+                         </button>
                         <button
                           type="button"
                           role="menuitem"
@@ -7711,7 +8007,7 @@ export function App() {
                     )}
                   </div>
                 </div>
-                {active && tabList.length > 0 && (
+                {active && (
                   <div className="project-sessions">
                     {tabList.map((tab) => {
                       const tabRunning =
@@ -7719,12 +8015,19 @@ export function App() {
                       const tabWaiting = waitingApproval && tabRunning;
                       const tabPinned = isTabPinned(p, tab.id);
                       return (
-                      <button
+                      <div
+                        role="button"
+                        tabIndex={0}
                         key={tab.id}
-                        type="button"
                         className={`session-item ${tab.id === store?.activeTabId ? "active" : ""} ${
                           tabRunning ? "running" : ""
                         } ${tabWaiting ? "waiting" : ""} ${tabPinned ? "pinned" : ""}`}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            void onSwitchTab(tab.id);
+                          }
+                        }}
                         onClick={() => void onSwitchTab(tab.id)}
                         title={
                           tabWaiting
@@ -7772,7 +8075,8 @@ export function App() {
                         >
                           ×
                         </span>
-                      </button>
+                      {renderChatMenu(p, tab.id, tab.title || "Chat", tabPinned, "active")}
+                      </div>
                       );
                     })}
                     <button type="button" className="session-item add" onClick={() => void newTab()}>
@@ -7860,9 +8164,10 @@ export function App() {
             const pinKey = standalonePath || STANDALONE_PIN_KEY;
             const tabPinned = isTabPinned(pinKey, tab.id);
             return (
-              <button
+              <div
+                role="button"
+                tabIndex={0}
                 key={tab.id}
-                type="button"
                 className={`session-item standalone-item ${active ? "active" : ""} ${
                   tabRunning ? "running" : ""
                 } ${tabWaiting ? "waiting" : ""} ${tabPinned ? "pinned" : ""}`}
@@ -7878,6 +8183,12 @@ export function App() {
                       await onSwitchTab(wantId);
                     }
                   })();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    e.currentTarget.click();
+                  }
                 }}
                 title={
                   tabWaiting
@@ -7940,7 +8251,8 @@ export function App() {
                 >
                   ×
                 </span>
-              </button>
+              {renderChatMenu(pinKey, tab.id, tab.title || "Chat", tabPinned, "standalone-list")}
+              </div>
             );
           })}
           {standaloneTabs.length === 0 && (
@@ -9858,7 +10170,7 @@ export function App() {
                 type="button"
                 className="ghost icon"
                 onClick={() => setShortcutsModalOpen(false)}
-                aria-label="Đóng"
+                aria-label={t("common.close")}
               >
                 ×
               </button>
@@ -11559,6 +11871,158 @@ export function App() {
           </div>
         )}
 
+      {renameTabModal && (
+        <div
+          className="modal-backdrop center"
+          onClick={() => setRenameTabModal(null)}
+        >
+          <div
+            className="modal update-modal confirm-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rename-tab-title"
+          >
+            <div className="modal-head">
+              <h3 id="rename-tab-title">{t("chat.renameTitle")}</h3>
+              <button
+                type="button"
+                className="ghost icon"
+                onClick={() => setRenameTabModal(null)}
+                aria-label={t("common.close")}
+              >
+                {"\u00d7"}
+              </button>
+            </div>
+            <p className="update-prompt">{t("chat.renamePrompt")}</p>
+            <label className="rename-project-label" htmlFor="rename-tab-input">
+              {t("chat.renameLabel")}
+            </label>
+            <input
+              id="rename-tab-input"
+              className="rename-project-input"
+              value={renameTabModal.name}
+              placeholder={t("chat.renamePlaceholder")}
+              maxLength={120}
+              autoFocus
+              onChange={(e) =>
+                setRenameTabModal((cur) =>
+                  cur ? { ...cur, name: e.target.value, error: undefined } : cur
+                )
+              }
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void executeRenameTab();
+                }
+              }}
+            />
+            {renameTabModal.error && (
+              <p className="rename-project-error" role="alert">
+                {renameTabModal.error}
+              </p>
+            )}
+            <div className="actions">
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => setRenameTabModal(null)}
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                type="button"
+                className="primary"
+                disabled={!renameTabModal.name.trim()}
+                onClick={() => void executeRenameTab()}
+              >
+                {t("common.save")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {renameProjectModal && (
+        <div
+          className="modal-backdrop center"
+          onClick={() => setRenameProjectModal(null)}
+        >
+          <div
+            className="modal update-modal confirm-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rename-project-title"
+          >
+            <div className="modal-head">
+              <h3 id="rename-project-title">{"\u0110\u1ed5i t\u00ean project"}</h3>
+              <button
+                type="button"
+                className="ghost icon"
+                onClick={() => setRenameProjectModal(null)}
+                aria-label={"\u0110\u00f3ng"}
+              >
+                {"\u00d7"}
+              </button>
+            </div>
+            <p className="update-prompt">
+              {"\u0110\u1ed5i t\u00ean folder project v\u00e0 gi\u1eef nguy\u00ean l\u1ecbch s\u1eed chat trong app."}
+            </p>
+            <label className="rename-project-label" htmlFor="rename-project-input">
+              {"T\u00ean m\u1edbi"}
+            </label>
+            <input
+              id="rename-project-input"
+              className="rename-project-input"
+              value={renameProjectModal.name}
+              autoFocus
+              onChange={(e) =>
+                setRenameProjectModal((cur) =>
+                  cur ? { ...cur, name: e.target.value, error: undefined } : cur
+                )
+              }
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void executeRenameProject();
+                }
+              }}
+            />
+            {renameProjectModal.error && (
+              <p className="rename-project-error" role="alert">
+                {renameProjectModal.error}
+              </p>
+            )}
+            <p className="confirm-path" title={renameProjectModal.path}>
+              <span className="confirm-path-label">{"Folder hi\u1ec7n t\u1ea1i"}</span>
+              <code>{renameProjectModal.path}</code>
+            </p>
+            <ul className="confirm-list">
+              <li>Kh&#xF4;ng x&#xF3;a file trong folder</li>
+              <li>L&#x1ECB;ch s&#x1EED; chat v&#xE0; tab s&#x1EBD; &#x111;&#x1B0;&#x1EE3;c gi&#x1EEF; l&#x1EA1;i</li>
+            </ul>
+            <div className="actions">
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => setRenameProjectModal(null)}
+              >
+                H&#x1EE7;y
+              </button>
+              <button
+                type="button"
+                className="primary"
+                disabled={!renameProjectModal.name.trim()}
+                onClick={() => void executeRenameProject()}
+              >
+                &#x110;&#x1ED5;i t&#xEA;n
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {removeRecentConfirm && (
         <div
           className="modal-backdrop center"
@@ -11627,7 +12091,7 @@ export function App() {
           >
             <div className="modal-head">
               <h3 id="close-tab-title">
-                {closeTabConfirm.running ? "Dừng và xóa chat" : "Xóa chat"}
+                {t(closeTabConfirm.running ? "chat.stopDeleteTitle" : "chat.deleteTitle")}
               </h3>
               <button
                 type="button"
@@ -11639,14 +12103,15 @@ export function App() {
               </button>
             </div>
             <p className="update-prompt">
-              {closeTabConfirm.running
-                ? `“${closeTabConfirm.title}” đang chạy agent. Dừng agent và xóa tab này?`
-                : `Xóa chat “${closeTabConfirm.title}”?`}
+              {t(
+                closeTabConfirm.running ? "chat.stopDeletePrompt" : "chat.deletePrompt",
+                { name: closeTabConfirm.title }
+              )}
             </p>
             <ul className="confirm-list">
-              {closeTabConfirm.running && <li>Agent trên tab này sẽ bị dừng ngay</li>}
-              <li>Lịch sử tin nhắn trong tab này sẽ mất</li>
-              <li>Hành động không hoàn tác được</li>
+              {closeTabConfirm.running && <li>{t("chat.deleteRunningNote")}</li>}
+              <li>{t("chat.deleteHistoryNote")}</li>
+              <li>{t("chat.deleteUndoNote")}</li>
             </ul>
             <div className="actions">
               <button
@@ -11661,7 +12126,7 @@ export function App() {
                 className="danger"
                 onClick={() => void executeCloseTab()}
               >
-                {closeTabConfirm.running ? "Dừng và xóa" : "Xóa"}
+                {closeTabConfirm.running ? t("chat.stopDeleteAction") : t("chat.delete")}
               </button>
             </div>
           </div>

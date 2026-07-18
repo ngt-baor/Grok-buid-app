@@ -717,6 +717,7 @@ declare global {
         cwd?: string;
         terminal?: string;
       }) => Promise<{ ok: boolean; cmd?: string; cwd?: string }>;
+      renameProject: (projectPath: string, newName: string) => Promise<ProjectBundle>;
       removeRecentProject: (projectPath: string) => Promise<AppSettings>;
       /** Sync Electron titleBarOverlay / window chrome with light|dark. */
       setChromeTheme?: (theme: "light" | "dark" | string) => Promise<{ ok: boolean }>;

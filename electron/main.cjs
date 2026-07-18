@@ -65,6 +65,7 @@ const { listSkills } = require("./skills.cjs");
 const {
   loadProjectSession,
   loadStore,
+  renameProjectSession,
   saveActiveTab,
   saveTab,
   createTab,
@@ -511,6 +512,21 @@ function projectBundle(projectPath) {
     tab,
     chat: { items: tab.items || [] },
   };
+}
+
+function sameProjectPath(a, b) {
+  if (!a || !b) return false;
+  return path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+}
+
+function remapProjectPathRecord(record, oldPath, newPath) {
+  const next = { ...(record || {}) };
+  const oldKey = Object.keys(next).find((key) => sameProjectPath(key, oldPath));
+  if (oldKey) {
+    next[newPath] = next[oldKey];
+    delete next[oldKey];
+  }
+  return next;
 }
 
 function registerIpc() {
@@ -987,6 +1003,76 @@ function registerIpc() {
       ? recentProjects[0] || ""
       : settings.lastProject;
     return saveSettings({ recentProjects, lastProject });
+  });
+
+  ipcMain.handle("project:rename", (_e, { projectPath, newName } = {}) => {
+    if (typeof projectPath !== "string" || !projectPath.trim()) {
+      throw new Error("Thi\u1ebfu project path.");
+    }
+    const source = path.resolve(String(projectPath || ""));
+    const name = String(newName || "").trim();
+    if (!name || name === "." || name === "..") {
+      throw new Error("\u0054\u00ean project kh\u00f4ng \u0111\u01b0\u1ee3c \u0111\u1ec3 tr\u1ed1ng.");
+    }
+    if (/^[. ]+$/.test(name) || /[<>:"/\\|?*\u0000-\u001f]/.test(name)) {
+      throw new Error("\u0054\u00ean project ch\u1ee9a k\u00fd t\u1ef1 kh\u00f4ng h\u1ee3p l\u1ec7.");
+    }
+    if (name.length > 180) {
+      throw new Error("\u0054\u00ean project qu\u00e1 d\u00e0i.");
+    }
+    if (!fs.existsSync(source) || !fs.statSync(source).isDirectory()) {
+      throw new Error("Project path kh\u00f4ng t\u1ed3n t\u1ea1i ho\u1eb7c kh\u00f4ng ph\u1ea3i folder.");
+    }
+
+    const target = path.join(path.dirname(source), name);
+    if (sameProjectPath(source, target)) return projectBundle(source);
+    if (fs.existsSync(target)) {
+      throw new Error(`Folder \u201c${name}\u201d \u0111\u00e3 t\u1ed3n t\u1ea1i trong th\u01b0 m\u1ee5c cha.`);
+    }
+
+    const sessionMove = renameProjectSession(source, target);
+    let folderMoved = false;
+    const rollback = () => {
+      if (folderMoved) {
+        try {
+          fs.renameSync(target, source);
+        } catch {
+          /* best effort rollback; the original error remains user-visible */
+        }
+      }
+      if (sessionMove.moved) {
+        try {
+          renameProjectSession(target, source);
+        } catch {
+          /* best effort rollback */
+        }
+      }
+    };
+
+    try {
+      fs.renameSync(source, target);
+      folderMoved = true;
+      const settings = loadSettings();
+      const recentProjects = (settings.recentProjects || []).map((p) =>
+        sameProjectPath(p, source) ? target : p
+      );
+      const nextSettings = saveSettings({
+        recentProjects,
+        lastProject: sameProjectPath(settings.lastProject, source)
+          ? target
+          : settings.lastProject,
+        projectModels: remapProjectPathRecord(settings.projectModels, source, target),
+        projectEfforts: remapProjectPathRecord(settings.projectEfforts, source, target),
+      });
+      if (sameProjectPath(activeProject, source)) activeProject = target;
+      // Keep the returned bundle authoritative for the renderer after a rename.
+      const bundle = projectBundle(target);
+      bundle.settings = nextSettings;
+      return bundle;
+    } catch (err) {
+      rollback();
+      throw err;
+    }
   });
 
   ipcMain.handle("agent:start", async (_e, opts = {}) => {

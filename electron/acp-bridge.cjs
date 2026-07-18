@@ -182,7 +182,7 @@ class AcpBridge extends EventEmitter {
       protocolVersion: 1,
       clientInfo: {
         name: "grok-build-app",
-        version: "0.1.7",
+        version: "0.1.8",
       },
       clientCapabilities: {
         fs: { readTextFile: true, writeTextFile: true },

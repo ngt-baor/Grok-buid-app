@@ -952,6 +952,34 @@ html.theme-light .sidebar-show-more:hover {
 }
 .session-item:hover .session-x { opacity: 1; }
 .session-x:hover { color: var(--bad); }
+.project-sessions .session-pin,
+.project-sessions .session-x,
+.standalone-list .session-pin,
+.standalone-list .session-x {
+  display: none;
+}
+.chat-menu-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+.session-more {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  opacity: 0;
+  color: var(--text-faint);
+}
+.session-item:hover .session-more,
+.session-more:focus-visible,
+.session-more[aria-expanded="true"] {
+  opacity: 1;
+}
+.chat-ctx-menu {
+  min-width: 152px;
+  z-index: 80;
+}
 
 .harness-box {
   border-top: 1px solid var(--line);
@@ -4266,6 +4294,32 @@ html.theme-light .perm-allow-caret {
 }
 
 /* In-app confirm (remove recent project, etc.) */
+.rename-project-label {
+  display: block;
+  margin: 10px 0 6px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.rename-project-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: var(--bg1);
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
+.rename-project-input:focus {
+  border-color: var(--line-strong);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.rename-project-error {
+  margin: 7px 0 0;
+  color: var(--bad);
+  font-size: 12px;
+}
 .confirm-modal .update-prompt {
   margin-bottom: 10px;
   line-height: 1.45;
@@ -5588,6 +5642,24 @@ button.ctx-chip:disabled {
   margin-top: 0;
 }
 /* Row ⋯ — same size as section head; SVG geometrically centered */
+.project-new-chat {
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  opacity: 0.7;
+}
+.project-new-chat:hover:not(:disabled),
+.project-new-chat:focus-visible {
+  color: var(--text);
+  opacity: 1;
+}
+
 button.ghost.icon.recent-more,
 button.recent-more {
   box-sizing: border-box;
