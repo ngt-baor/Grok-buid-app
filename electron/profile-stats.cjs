@@ -12,12 +12,17 @@ function activityPath() {
   try {
     userData = app.getPath("userData");
   } catch {
+    const home = os.homedir() || process.env.HOME || "";
+    const fallbackAppData =
+      process.env.APPDATA ||
+      (process.platform === "darwin"
+        ? path.join(home, "Library", "Application Support")
+        : process.platform === "win32"
+          ? path.join(home, "AppData", "Roaming")
+          : path.join(home, ".config"));
     userData =
       process.env.GROK_BUILD_USER_DATA ||
-      path.join(
-        process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"),
-        "grok-build-app"
-      );
+      path.join(fallbackAppData, "grok-build-app");
   }
   return path.join(userData, "activity.json");
 }

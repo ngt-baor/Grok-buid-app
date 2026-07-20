@@ -1,9 +1,10 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const os = require("node:os");
 const { app } = require("electron");
+const { defaultGrokPath } = require("./platform/paths.cjs");
 
-const DEFAULT_GROK = path.join(os.homedir(), ".grok", "bin", "grok.exe");
+/** Platform-aware default: ~/.grok/bin/grok.exe (Win) or ~/.grok/bin/grok (macOS/Linux). */
+const DEFAULT_GROK = defaultGrokPath();
 
 function settingsPath() {
   return path.join(app.getPath("userData"), "settings.json");
@@ -34,7 +35,11 @@ function defaultSettings() {
     messageQueueEnabled: true,
     /** Privacy banner when harness / MEMORY detected */
     privacyBanner: true,
-    /** Preferred external terminal: auto | wt | cmd | powershell */
+    /**
+     * Preferred external terminal:
+     * - Windows: auto | wt | cmd | powershell
+     * - macOS: auto | terminal | iterm
+     */
     terminal: "auto",
     /**
      * Inject chrome-devtools-mcp into ACP session/new (opt-in).

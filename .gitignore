@@ -18,6 +18,12 @@ Thumbs.db
 auth.json
 **/auth.json
 
+# Apple code-signing material (private keys, CSR, exported p12) — NEVER push
+signing/
+*.p12
+*.cer
+*.certSigningRequest
+
 # Editor
 .vscode/
 .idea/

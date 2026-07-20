@@ -87,6 +87,8 @@ contextBridge.exposeInMainWorld("grokApp", {
   showItemInFolder: (targetPath) => ipcRenderer.invoke("shell:show-item", targetPath),
   openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
   openTerminal: (opts) => ipcRenderer.invoke("shell:open-terminal", opts || {}),
+  /** Platform terminal choices for Settings (Win wt/ps vs Mac Terminal/iTerm). */
+  getTerminalOptions: () => ipcRenderer.invoke("shell:terminal-options"),
   renameProject: (projectPath, newName) =>
     ipcRenderer.invoke("project:rename", { projectPath, newName }),
   removeRecentProject: (projectPath) =>

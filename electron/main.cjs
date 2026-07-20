@@ -2,7 +2,15 @@ const { app, BrowserWindow, dialog, ipcMain, clipboard, shell, Menu } = require(
 const path = require("node:path");
 const fs = require("node:fs");
 const { spawn } = require("node:child_process");
-const { getAppIcon, ensurePngOnDisk, ensureBrandLogoPngs } = require("./icon-png.cjs");
+const {
+  getAppIcon,
+  ensurePngOnDisk,
+  ensureBrandLogoPngs,
+  resolveDockIconPath,
+} = require("./icon-png.cjs");
+
+/** Display name in menu / about / window (not "Electron"). */
+const APP_DISPLAY_NAME = "Grok Build App";
 const { installAppMenu, popupMenuAt, setMenuLocale } = require("./menu.cjs");
 const {
   loadSettings,
@@ -101,6 +109,11 @@ const {
   installCli,
   cancelCliInstall,
 } = require("./cli-install.cjs");
+const { resolveGrokBinary } = require("./platform/paths.cjs");
+const {
+  openExternalTerminal,
+  terminalOptions,
+} = require("./platform/terminal.cjs");
 
 // Stable userData name — never share Chromium profile with official Grok Desktop (%APPDATA%\grok)
 try {
@@ -110,6 +123,13 @@ try {
   }
 } catch {
   /* before ready: setPath is allowed; ignore if already locked */
+}
+
+// Name shown in menu bar / about (dev + prod). Packaged Mac also uses productName in Info.plist.
+try {
+  app.setName(APP_DISPLAY_NAME);
+} catch {
+  /* ignore */
 }
 
 // Classic (non-overlay) scrollbars so ::-webkit-scrollbar CSS actually paints on Windows.
@@ -233,8 +253,58 @@ function applyChromeTheme(theme) {
   }
 }
 
+function applyAppBranding() {
+  try {
+    app.setName(APP_DISPLAY_NAME);
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (typeof app.setAppUserModelId === "function") {
+      app.setAppUserModelId("com.ngtbaor.grokbuild");
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    app.setAboutPanelOptions({
+      applicationName: APP_DISPLAY_NAME,
+      applicationVersion: app.getVersion(),
+      copyright: "Copyright © ngt-baor",
+    });
+  } catch {
+    /* ignore */
+  }
+
+  // macOS Dock: BrowserWindow.icon is ignored; must use dock.setIcon (PNG/ICNS path).
+  // Dev Dock *label* comes from Electron.app Info.plist — patched by scripts/brand-electron-dev.cjs.
+  if (process.platform === "darwin" && app.dock) {
+    try {
+      ensurePngOnDisk();
+    } catch {
+      /* ignore */
+    }
+    const dockPath = resolveDockIconPath();
+    if (dockPath) {
+      try {
+        app.dock.setIcon(dockPath);
+      } catch {
+        try {
+          const img = getAppIcon({ preferRaster: true });
+          if (img && !img.isEmpty()) app.dock.setIcon(img);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+}
+
 function createWindow() {
-  const icon = getAppIcon();
+  applyAppBranding();
+
+  // Raster first for taskbar/Dock quality (same brand mark as Windows).
+  const icon = getAppIcon({ preferRaster: true });
   try {
     ensurePngOnDisk();
   } catch {
@@ -268,7 +338,7 @@ function createWindow() {
     height: 920,
     minWidth: 1100,
     minHeight: 720,
-    title: "Grok Build",
+    title: APP_DISPLAY_NAME,
     backgroundColor: titlebarColor,
     show: false,
     frame: true,
@@ -287,6 +357,8 @@ function createWindow() {
     winOpts.trafficLightPosition = { x: 12, y: 10 };
   } else if (isWin) {
     winOpts.titleBarStyle = "hidden";
+    winOpts.icon =
+      path.join(__dirname, "..", "assets", "icon.ico");
     winOpts.titleBarOverlay = {
       color: titlebarColor,
       symbolColor: titlebarSymbol,
@@ -314,6 +386,15 @@ function createWindow() {
   if (icon && typeof icon !== "string" && !icon.isEmpty?.()) {
     try {
       mainWindow.setIcon(icon);
+    } catch {
+      /* ignore */
+    }
+  }
+  // Re-apply Dock icon after window exists (some Electron builds reset on create).
+  if (isMac && app.dock) {
+    try {
+      const dockPath = resolveDockIconPath();
+      if (dockPath) app.dock.setIcon(dockPath);
     } catch {
       /* ignore */
     }
@@ -939,57 +1020,22 @@ function registerIpc() {
   });
 
   /**
-   * Open external terminal in project cwd (Windows-first).
-   * Prefer Windows Terminal (wt), fallback PowerShell / cmd.
+   * Open external terminal in project cwd (Windows / macOS / Linux).
    */
   ipcMain.handle("shell:open-terminal", async (_e, opts = {}) => {
     const cwd = path.resolve(opts.cwd || activeProject || process.cwd());
     if (!fs.existsSync(cwd)) throw new Error("cwd không tồn tại");
     const settings = loadSettings();
     const pref = opts.terminal || settings.terminal || "auto";
-
-    const trySpawn = (cmd, args, shellFlag = false) =>
-      new Promise((resolve, reject) => {
-        try {
-          const child = spawn(cmd, args, {
-            cwd,
-            detached: true,
-            stdio: "ignore",
-            windowsHide: false,
-            shell: shellFlag,
-          });
-          child.on("error", reject);
-          child.unref();
-          resolve({ ok: true, cmd, args, cwd });
-        } catch (err) {
-          reject(err);
-        }
-      });
-
-    const attempts = [];
-    if (pref === "wt" || pref === "auto") {
-      attempts.push(() => trySpawn("wt.exe", ["-d", cwd]));
-      attempts.push(() => trySpawn("wt", ["-d", cwd]));
-    }
-    if (pref === "powershell" || pref === "auto") {
-      attempts.push(() =>
-        trySpawn("powershell.exe", ["-NoExit", "-Command", `Set-Location -LiteralPath '${cwd.replace(/'/g, "''")}'`])
-      );
-    }
-    if (pref === "cmd" || pref === "auto") {
-      attempts.push(() => trySpawn("cmd.exe", ["/k", `cd /d "${cwd}"`]));
-    }
-
-    let lastErr = null;
-    for (const attempt of attempts) {
-      try {
-        return await attempt();
-      } catch (err) {
-        lastErr = err;
-      }
-    }
-    throw new Error(String(lastErr?.message || lastErr || "Không mở được terminal"));
+    return openExternalTerminal(cwd, pref);
   });
+
+  /** Platform-specific terminal choices for Settings UI. */
+  ipcMain.handle("shell:terminal-options", () => ({
+    ok: true,
+    platform: process.platform,
+    options: terminalOptions(),
+  }));
 
   /** Remove project from recent list */
   ipcMain.handle("project:remove-recent", (_e, projectPath) => {
@@ -1097,8 +1143,9 @@ function registerIpc() {
 
     activeProject = path.resolve(cwd);
     recentDiffs = [];
+    const grokBinary = resolveGrokBinary(opts.grokPath || settings.grokPath);
     bridge = new AcpBridge({
-      grokPath: opts.grokPath || settings.grokPath,
+      grokPath: grokBinary,
       cwd,
       model,
       reasoningEffort,
@@ -1462,10 +1509,13 @@ app.on("second-instance", () => {
 app.whenReady().then(async () => {
   // Windows taskbar / jump list identity
   try {
-    app.setAppUserModelId("com.xai.grok-build-app");
+    app.setAppUserModelId("com.ngtbaor.grokbuild");
   } catch {
     /* ignore */
   }
+
+  // Name + Dock/taskbar icon (must run after ready for dock.setIcon)
+  applyAppBranding();
 
   // Menu labels follow settings.locale (vi default)
   let bootLocale = "vi";

@@ -20,14 +20,25 @@ function svgToNativeImage(svg) {
   return nativeImage.createFromDataURL(dataUrl);
 }
 
-function resolveIconPath() {
-  // Prefer SVG brand mark (official Grok spiral) over older PNG/ICO caches.
-  const candidates = [
-    path.join(__dirname, "..", "assets", "icon.svg"),
-    path.join(__dirname, "..", "public", "icon.svg"),
-    path.join(__dirname, "..", "assets", "icon.ico"),
-    path.join(__dirname, "..", "assets", "icon.png"),
+/**
+ * @param {{ preferRaster?: boolean }} [opts]
+ *   preferRaster: PNG/ICO first (Dock / taskbar look sharper than SVG data-URL).
+ */
+function resolveIconPath(opts = {}) {
+  const root = path.join(__dirname, "..");
+  const raster = [
+    path.join(root, "assets", "icon.png"),
+    path.join(root, "public", "icon.png"),
+    path.join(root, "assets", "icon.ico"),
+    path.join(root, "assets", "logo-dark.png"),
   ];
+  const vector = [
+    path.join(root, "assets", "icon.svg"),
+    path.join(root, "public", "icon.svg"),
+  ];
+  const candidates = opts.preferRaster
+    ? [...raster, ...vector]
+    : [...vector, ...raster];
   for (const p of candidates) {
     if (fs.existsSync(p)) return p;
   }
@@ -35,10 +46,19 @@ function resolveIconPath() {
 }
 
 /**
+ * Absolute path best suited for Dock / setIcon (raster).
+ * @returns {string | null}
+ */
+function resolveDockIconPath() {
+  return resolveIconPath({ preferRaster: true });
+}
+
+/**
+ * @param {{ preferRaster?: boolean }} [opts]
  * @returns {import("electron").NativeImage}
  */
-function getAppIcon() {
-  const p = resolveIconPath();
+function getAppIcon(opts = {}) {
+  const p = resolveIconPath(opts);
   if (p) {
     try {
       if (p.endsWith(".svg")) {
@@ -46,8 +66,15 @@ function getAppIcon() {
         const img = svgToNativeImage(svg);
         if (img && !img.isEmpty()) return img;
       } else {
-        const img = nativeImage.createFromPath(p);
-        if (img && !img.isEmpty()) return img;
+        let img = nativeImage.createFromPath(p);
+        if (img && !img.isEmpty()) {
+          // Ensure a reasonable size for Windows taskbar / macOS Dock
+          const size = img.getSize();
+          if (size.width > 0 && size.width < 128) {
+            img = img.resize({ width: 256, height: 256 });
+          }
+          return img;
+        }
       }
     } catch {
       /* fall through */
@@ -113,4 +140,10 @@ function ensureBrandLogoPngs() {
   return { copied, sizes };
 }
 
-module.exports = { getAppIcon, ensurePngOnDisk, ensureBrandLogoPngs, resolveIconPath };
+module.exports = {
+  getAppIcon,
+  ensurePngOnDisk,
+  ensureBrandLogoPngs,
+  resolveIconPath,
+  resolveDockIconPath,
+};

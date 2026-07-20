@@ -50,7 +50,7 @@ function labelsFor(locale) {
       devTools: "Developer tools",
       palette: "Command palette",
       docs: "Grok docs",
-      about: "About Grok Build",
+      about: "About Grok Build App",
       hide: "Hide",
       hideOthers: "Hide others",
       unhide: "Show all",
@@ -86,7 +86,7 @@ function labelsFor(locale) {
     devTools: "Công cụ phát triển",
     palette: "Command palette",
     docs: "Tài liệu Grok",
-    about: "Giới thiệu Grok Build",
+    about: "Giới thiệu Grok Build App",
     hide: "Ẩn",
     hideOthers: "Ẩn cái khác",
     unhide: "Hiện tất cả",
@@ -245,7 +245,7 @@ function buildTemplate(handlers = {}, locale = currentLocale) {
 
   if (process.platform === "darwin") {
     template.unshift({
-      label: app.name || "Grok Build",
+      label: app.name || "Grok Build App",
       id: "menu-app",
       submenu: [
         { label: L.about, click: () => send("menu:about") },

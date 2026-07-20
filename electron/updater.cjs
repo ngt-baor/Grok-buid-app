@@ -130,15 +130,21 @@ function compareSemver(a, b) {
 function getAppVersionInfo() {
   const pkg = readPackageJson();
   let version = "0.0.0";
+  let isPackaged = false;
   try {
-    version = app.getVersion() || pkg.version || "0.0.0";
+    if (app && typeof app.getVersion === "function") {
+      version = app.getVersion() || pkg.version || "0.0.0";
+      isPackaged = Boolean(app.isPackaged);
+    } else {
+      version = pkg.version || "0.0.0";
+    }
   } catch {
     version = pkg.version || "0.0.0";
   }
   return {
     version: String(version).replace(/^v/i, ""),
     name: pkg.productName || pkg.name || "Grok Build",
-    isPackaged: app.isPackaged,
+    isPackaged,
     electron: process.versions.electron || null,
     platform: process.platform,
     arch: process.arch,
@@ -207,6 +213,7 @@ function httpGetBuffer(url, opts = {}) {
  */
 function pickDownloadAsset(assets) {
   const list = Array.isArray(assets) ? assets : [];
+  const arch = process.arch; // arm64 | x64 | …
   const scored = list
     .filter((a) => a && a.browser_download_url && a.name)
     .map((a) => {
@@ -219,7 +226,17 @@ function pickDownloadAsset(assets) {
         else if (name.endsWith(".zip") && !/source|src/i.test(name)) score = 50;
       } else if (process.platform === "darwin") {
         if (name.endsWith(".dmg")) score = 100;
-        else if (name.endsWith(".zip") && !/source|src/i.test(name)) score = 60;
+        else if (name.endsWith(".zip") && !/source|src/i.test(name) && /mac|darwin/i.test(name))
+          score = 70;
+        else if (name.endsWith(".zip") && !/source|src/i.test(name)) score = 55;
+        // Prefer matching CPU arch when filename encodes it
+        if (score > 0) {
+          if (arch === "arm64" && /arm64|aarch64|apple.?silicon/i.test(name)) score += 15;
+          if (arch === "x64" && /(x64|x86_64|amd64)/i.test(name) && !/arm64|aarch64/i.test(name))
+            score += 15;
+          if (arch === "arm64" && /(x64|x86_64|amd64)/i.test(name) && !/arm64|universal/i.test(name))
+            score -= 20;
+        }
       } else {
         if (name.endsWith(".AppImage")) score = 100;
         else if (name.endsWith(".deb")) score = 80;
@@ -371,6 +388,21 @@ async function checkForUpdates(settings) {
   const cmp = compareSemver(latestVersion, current.version);
   const updateAvailable = cmp > 0;
   const asset = pickDownloadAsset(release.assets || []);
+  const assetInfo = asset
+    ? {
+        name: asset.name,
+        size: asset.size || 0,
+        url: asset.browser_download_url,
+      }
+    : null;
+  const releaseUrl =
+    release.html_url || `https://github.com/${repo}/releases/tag/${tag}`;
+  const platformLabel =
+    process.platform === "darwin"
+      ? "macOS"
+      : process.platform === "win32"
+        ? "Windows"
+        : process.platform;
 
   if (!updateAvailable) {
     return {
@@ -383,17 +415,33 @@ async function checkForUpdates(settings) {
         cmp === 0
           ? `Bạn đang dùng bản mới nhất (v${current.version}).`
           : `Bản local (v${current.version}) mới hơn release (v${latestVersion}).`,
-      releaseUrl: release.html_url || `https://github.com/${repo}/releases/tag/${tag}`,
-      asset: asset
-        ? {
-            name: asset.name,
-            size: asset.size || 0,
-            url: asset.browser_download_url,
-          }
-        : null,
+      releaseUrl,
+      asset: assetInfo,
       body: release.body || null,
       publishedAt: release.published_at || null,
       repo,
+      platform: process.platform,
+      arch: process.arch,
+    };
+  }
+
+  // Newer release exists but no installer for this OS/arch (e.g. Win-only release).
+  if (!assetInfo) {
+    return {
+      ok: true,
+      status: "update_no_asset",
+      currentVersion: current.version,
+      latestVersion,
+      updateAvailable: true,
+      canDownload: false,
+      message: `Có bản mới v${latestVersion}, nhưng release chưa có gói ${platformLabel} (${process.arch}). Mở trang release để kiểm tra sau.`,
+      releaseUrl,
+      asset: null,
+      body: release.body || null,
+      publishedAt: release.published_at || null,
+      repo,
+      platform: process.platform,
+      arch: process.arch,
     };
   }
 
@@ -403,18 +451,15 @@ async function checkForUpdates(settings) {
     currentVersion: current.version,
     latestVersion,
     updateAvailable: true,
-    message: `Có bản mới v${latestVersion} (hiện tại v${current.version}).`,
-    releaseUrl: release.html_url || `https://github.com/${repo}/releases/tag/${tag}`,
-    asset: asset
-      ? {
-          name: asset.name,
-          size: asset.size || 0,
-          url: asset.browser_download_url,
-        }
-      : null,
+    canDownload: true,
+    message: `Có bản mới v${latestVersion} (hiện tại v${current.version}) — ${assetInfo.name}`,
+    releaseUrl,
+    asset: assetInfo,
     body: release.body || null,
     publishedAt: release.published_at || null,
     repo,
+    platform: process.platform,
+    arch: process.arch,
   };
 }
 
@@ -602,7 +647,15 @@ function downloadsDir() {
  */
 async function downloadUpdate(asset, onProgress) {
   if (!asset?.url || !asset?.name) {
-    throw new Error("Không có file cài đặt trong release (cần .exe/.msi sau khi build).");
+    const need =
+      process.platform === "darwin"
+        ? ".dmg hoặc .zip"
+        : process.platform === "win32"
+          ? ".exe/.msi"
+          : "AppImage/deb";
+    throw new Error(
+      `Không có file cài đặt phù hợp trong release (cần ${need} cho ${process.platform}).`
+    );
   }
   // Cancel any prior download
   if (downloadState.abort) {
@@ -659,6 +712,7 @@ function cancelDownload() {
 
 /**
  * Open downloaded installer / show in folder.
+ * Windows: run Setup .exe. macOS: open .dmg (Finder mount) or reveal .zip.
  * @param {string} filePath
  * @param {"open" | "reveal"} mode
  */
@@ -670,6 +724,42 @@ async function applyUpdate(filePath, mode = "open") {
     shell.showItemInFolder(filePath);
     return { ok: true, action: "reveal", path: filePath };
   }
+
+  const lower = String(filePath).toLowerCase();
+
+  // macOS: prefer `open` so Gatekeeper / disk image mount works like double-click.
+  if (process.platform === "darwin" && (lower.endsWith(".dmg") || lower.endsWith(".zip"))) {
+    try {
+      const { spawn } = require("node:child_process");
+      await new Promise((resolve, reject) => {
+        const child = spawn("open", [filePath], {
+          detached: true,
+          stdio: "ignore",
+        });
+        child.on("error", reject);
+        child.unref();
+        // open returns quickly; treat spawn success as OK
+        setTimeout(resolve, 200);
+      });
+      return {
+        ok: true,
+        action: "open",
+        path: filePath,
+        hint: lower.endsWith(".dmg")
+          ? "Kéo Grok Build vào Applications, rồi mở app từ đó."
+          : "Giải nén .zip và thay app trong Applications.",
+      };
+    } catch (err) {
+      shell.showItemInFolder(filePath);
+      return {
+        ok: false,
+        error: String(err?.message || err),
+        action: "reveal",
+        path: filePath,
+      };
+    }
+  }
+
   const err = await shell.openPath(filePath);
   if (err) {
     // fallback: reveal
@@ -687,6 +777,7 @@ module.exports = {
   cancelDownload,
   applyUpdate,
   compareSemver,
+  pickDownloadAsset,
   formatBytes,
   formatSpeed,
   parseGithubRepo,

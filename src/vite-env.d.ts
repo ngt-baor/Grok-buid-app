@@ -39,7 +39,8 @@ export type AppSettings = {
    * Default true.
    */
   messageQueueEnabled?: boolean;
-  terminal?: "auto" | "wt" | "cmd" | "powershell" | string;
+  /** auto | wt | cmd | powershell (Win) · auto | terminal | iterm (macOS) */
+  terminal?: "auto" | "wt" | "cmd" | "powershell" | "terminal" | "iterm" | string;
   /** Inject chrome-devtools-mcp into ACP session (opt-in) */
   chromeDevtoolsMcp?: boolean;
   chromeDevtoolsMcpHeadless?: boolean;
@@ -717,6 +718,11 @@ declare global {
         cwd?: string;
         terminal?: string;
       }) => Promise<{ ok: boolean; cmd?: string; cwd?: string }>;
+      getTerminalOptions?: () => Promise<{
+        ok: boolean;
+        platform: string;
+        options: { id: string; label: string }[];
+      }>;
       renameProject: (projectPath: string, newName: string) => Promise<ProjectBundle>;
       removeRecentProject: (projectPath: string) => Promise<AppSettings>;
       /** Sync Electron titleBarOverlay / window chrome with light|dark. */

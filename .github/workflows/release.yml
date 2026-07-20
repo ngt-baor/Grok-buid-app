@@ -1,0 +1,85 @@
+# Build Windows + macOS on tag push, then attach assets to the same GitHub Release.
+# Tag format: v0.1.9 (must match package.json version).
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npm run dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-dist
+          path: |
+            release/Grok-Build-Setup-*.exe
+            release/Grok-Build-Setup-*.exe.blockmap
+            release/Grok-Build-Portable-*.exe
+            release/latest.yml
+          if-no-files-found: error
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - name: Ensure Electron binary
+        run: |
+          if [ ! -f node_modules/electron/path.txt ]; then
+            cd node_modules/electron && node install.js || true
+          fi
+          npx electron --version
+      - run: npm run dist:mac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dist
+          path: |
+            release/Grok-Build-*-arm64.dmg
+            release/Grok-Build-*-arm64.zip
+            release/Grok-Build-*-arm64.*.blockmap
+            release/latest-mac.yml
+          if-no-files-found: error
+
+  publish-release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-dist
+          path: out
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-dist
+          path: out
+      - name: List artifacts
+        run: ls -lah out
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          draft: false
+          generate_release_notes: true
+          files: out/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

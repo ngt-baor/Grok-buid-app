@@ -33,7 +33,9 @@
 | Feature map vs Codex | Done | [docs/CODEX-FEATURE-MAP.md](./docs/CODEX-FEATURE-MAP.md) |
 | PTY embed TUI | Deferred | Dùng terminal ngoài; PTY sau nếu cần |
 | Tauri shell | Deferred | Rust đã cài trên máy; MVP ship Electron trước |
-| Installer (.exe) | Pending | electron-builder sau |
+| Installer (.exe) | Done | Windows NSIS + Portable via `dist:win` |
+| macOS packaging (DMG) | Done | `dist:mac` → arm64 DMG/zip (unsigned unless Apple ID) |
+| Dual-platform updater | Done | Same GitHub Release; pick `.exe` / `.dmg` by OS |
 | Chrome DevTools MCP | Done | Settings → Agent → opt-in inject `chrome-devtools-mcp` via ACP `mcpServers` |
 
 **Chạy ngay:**

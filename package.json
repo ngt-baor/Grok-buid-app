@@ -4,7 +4,7 @@
   "private": true,
   "description": "Desktop shell for Grok Build — project picker, ACP chat, harness-aware UI",
   "main": "electron/main.cjs",
-  "productName": "Grok Build",
+  "productName": "Grok Build App",
   "type": "module",
   "author": "ngt-baor",
   "repository": {
@@ -19,9 +19,10 @@
     "updateRepo": "ngt-baor/Grok-buid-app"
   },
   "scripts": {
-    "predev": "node ./scripts/copy-logo-pngs.mjs",
+    "predev": "node ./scripts/copy-logo-pngs.mjs && node ./scripts/brand-electron-dev.cjs",
     "prebuild": "node ./scripts/copy-logo-pngs.mjs",
     "logos:copy": "node ./scripts/copy-logo-pngs.mjs",
+    "brand:dev": "node ./scripts/brand-electron-dev.cjs",
     "dev": "concurrently -k \"vite\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "start": "cross-env NODE_ENV=production electron .",
@@ -30,11 +31,13 @@
     "pack": "npm run icon:png && npm run build && npx --no-install electron-builder --dir",
     "dist": "npm run icon:png && npm run build && npx --no-install electron-builder",
     "dist:win": "npm run icon:png && npm run build && npx --no-install electron-builder --win",
-    "postinstall": "node -e \"try{require('electron-builder/package.json');console.log('electron-builder ok')}catch(e){console.warn('electron-builder missing — run npm install')}\"",
+    "dist:mac": "npm run icon:png && npm run build && npx --no-install electron-builder --mac",
+    "postinstall": "node ./scripts/brand-electron-dev.cjs && node -e \"try{require('electron-builder/package.json');console.log('electron-builder ok')}catch(e){console.warn('electron-builder missing — run npm install')}\"",
     "release:push": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/push-clean.ps1",
     "fix:idb-bloat": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/fix-grok-indexeddb-bloat.ps1",
     "fix:idb-bloat:clean-only": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/fix-grok-indexeddb-bloat.ps1 -SkipRestart",
     "smoke:ui": "node ./scripts/smoke-ui.cjs",
+    "smoke:platform": "node ./scripts/macos-platform-smoke.cjs",
     "test:project-management": "node ./scripts/project-management-smoke.cjs",
     "release:checklist": "node ./scripts/release-checklist.cjs"
   },
@@ -43,6 +46,7 @@
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@electron/notarize": "^3.1.1",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@vitejs/plugin-react": "^4.4.1",
@@ -56,7 +60,7 @@
   },
   "build": {
     "appId": "com.ngtbaor.grokbuild",
-    "productName": "Grok Build",
+    "productName": "Grok Build App",
     "copyright": "Copyright © ngt-baor",
     "directories": {
       "output": "release",
@@ -82,22 +86,53 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "assets/icon.ico",
       "artifactName": "Grok-Build-Setup-${version}.${ext}"
+    },
+    "afterSign": "scripts/notarize.cjs",
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "artifactName": "Grok-Build-${version}-${arch}.${ext}"
+    },
+    "dmg": {
+      "artifactName": "Grok-Build-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Grok Build"
+      "shortcutName": "Grok Build App"
     },
     "portable": {
       "artifactName": "Grok-Build-Portable-${version}.${ext}"

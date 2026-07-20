@@ -11470,10 +11470,22 @@ export function App() {
                       value={draftSettings.terminal ?? "auto"}
                       onChange={(e) => setDraftSettings((s) => ({ ...s, terminal: e.target.value }))}
                     >
-                      <option value="auto">Auto (WT → PowerShell → cmd)</option>
-                      <option value="wt">Windows Terminal</option>
-                      <option value="powershell">PowerShell</option>
-                      <option value="cmd">cmd</option>
+                      {/Mac|iPhone|iPod|iPad/i.test(
+                        `${navigator.platform || ""} ${navigator.userAgent || ""}`
+                      ) ? (
+                        <>
+                          <option value="auto">Auto (Terminal.app)</option>
+                          <option value="terminal">Terminal.app</option>
+                          <option value="iterm">iTerm2</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="auto">Auto (WT → PowerShell → cmd)</option>
+                          <option value="wt">Windows Terminal</option>
+                          <option value="powershell">PowerShell</option>
+                          <option value="cmd">cmd</option>
+                        </>
+                      )}
                     </select>
                   </>
                 )}

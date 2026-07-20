@@ -1,7 +1,8 @@
 /**
  * In-app Grok CLI installer (no visible terminal).
- * Mirrors official https://x.ai/cli/install.ps1:
- *   resolve channel version → download binary → ~/.grok/bin/grok.exe (+ agent.exe)
+ * Mirrors official install scripts:
+ *   Win:  https://x.ai/cli/install.ps1  → ~/.grok/bin/grok.exe
+ *   Mac/Linux: install.sh → ~/.grok/bin/grok
  * Progress events same shape as app updater for shared UI.
  */
 const fs = require("node:fs");
@@ -10,6 +11,18 @@ const path = require("node:path");
 const https = require("node:https");
 const http = require("node:http");
 const { spawn } = require("node:child_process");
+const {
+  grokHome,
+  defaultBinDir,
+  defaultDownloadDir,
+  defaultGrokBinaryName,
+  defaultAgentBinaryName,
+  platformTriple,
+  candidateBinaries,
+  resolveOnPath,
+  isExistingFile,
+  resolveGrokBinary,
+} = require("./platform/paths.cjs");
 
 const USER_AGENT = "GrokBuildApp-CliInstall";
 const MAX_REDIRECTS = 8;
@@ -18,18 +31,6 @@ const BASE_FALLBACK = "https://storage.googleapis.com/grok-build-public-artifact
 
 /** @type {{ abort: (() => void) | null }} */
 const downloadState = { abort: null };
-
-function grokHome() {
-  return path.join(os.homedir(), ".grok");
-}
-
-function defaultBinDir() {
-  return path.join(grokHome(), "bin");
-}
-
-function defaultDownloadDir() {
-  return path.join(grokHome(), "downloads");
-}
 
 function formatBytes(n) {
   const v = Number(n) || 0;
@@ -43,24 +44,6 @@ function formatSpeed(bps) {
   return `${formatBytes(bps)}/s`;
 }
 
-function platformTriple() {
-  if (process.platform !== "win32") {
-    return null;
-  }
-  // install.ps1: AMD64/x86 → x86_64, ARM64 → aarch64
-  const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
-  return `windows-${arch}`;
-}
-
-function candidateBinaries(settingsGrokPath) {
-  const list = [
-    settingsGrokPath,
-    path.join(defaultBinDir(), "grok.exe"),
-    path.join(defaultBinDir(), "grok"),
-  ].filter(Boolean);
-  return [...new Set(list)];
-}
-
 /**
  * @param {string | undefined} settingsGrokPath
  */
@@ -69,23 +52,20 @@ function getCliStatus(settingsGrokPath) {
   const binDir = defaultBinDir();
   let resolved = null;
   for (const c of candidateBinaries(settingsGrokPath)) {
-    try {
-      if (c && fs.existsSync(c) && fs.statSync(c).isFile()) {
-        resolved = c;
-        break;
-      }
-    } catch {
-      /* next */
+    if (isExistingFile(c)) {
+      resolved = path.resolve(c);
+      break;
     }
   }
-  // Bare "grok" on PATH — only trust if we can find a real file via where.exe
-  if (!resolved && process.platform === "win32") {
-    try {
-      const found = spawnSyncWhere("grok");
-      if (found) resolved = found;
-    } catch {
-      /* ignore */
-    }
+  // Bare "grok" on PATH (where.exe on Windows, which on macOS/Linux)
+  if (!resolved) {
+    const found = resolveOnPath("grok");
+    if (found) resolved = found;
+  }
+  // Absolute default if still missing from candidates (symlink edge cases)
+  if (!resolved) {
+    const viaResolve = resolveGrokBinary(settingsGrokPath);
+    if (isExistingFile(viaResolve)) resolved = viaResolve;
   }
 
   return {
@@ -95,30 +75,13 @@ function getCliStatus(settingsGrokPath) {
     binDir,
     platform,
     supported: platform != null,
+    defaultBinaryName: defaultGrokBinaryName(),
     installCommand:
       process.platform === "win32"
         ? "irm https://x.ai/cli/install.ps1 | iex"
         : "curl -fsSL https://x.ai/cli/install.sh | bash",
     docsUrl: "https://docs.x.ai/build/overview",
   };
-}
-
-function spawnSyncWhere(cmd) {
-  try {
-    const { execFileSync } = require("node:child_process");
-    const out = execFileSync("where.exe", [cmd], {
-      encoding: "utf8",
-      windowsHide: true,
-      timeout: 4000,
-    });
-    const line = String(out)
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .find((s) => s && fs.existsSync(s));
-    return line || null;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -363,11 +326,25 @@ function installBinaryLockedSafe(src, dest) {
 }
 
 /**
- * Prepend binDir to user PATH if missing (Windows).
+ * Prepend binDir to user PATH if missing.
+ * Windows: User PATH via PowerShell. macOS/Linux: current process PATH only
+ * (shell profile edits are left to the official install script).
  * @param {string} binDir
  */
 function ensureUserPath(binDir) {
-  if (process.platform !== "win32") return { ok: true, added: false };
+  // Always ensure current process can spawn `grok` immediately after install.
+  const pathKey = process.platform === "win32" ? "Path" : "PATH";
+  const cur = process.env[pathKey] || process.env.PATH || "";
+  const sep = process.platform === "win32" ? ";" : ":";
+  if (!cur.split(sep).includes(binDir)) {
+    process.env[pathKey] = `${binDir}${sep}${cur}`;
+    process.env.PATH = process.env[pathKey];
+  }
+
+  if (process.platform !== "win32") {
+    return Promise.resolve({ ok: true, added: false, processPathUpdated: true });
+  }
+
   return new Promise((resolve) => {
     const ps = `
 $bin = '${String(binDir).replace(/'/g, "''")}'
@@ -390,11 +367,7 @@ Write-Output 'ADDED'
     child.on("error", () => resolve({ ok: false, added: false }));
     child.on("close", () => {
       const added = /ADDED/i.test(out);
-      // Current process PATH so subsequent spawns find grok immediately
-      if (added || !process.env.Path?.includes(binDir)) {
-        process.env.Path = `${binDir};${process.env.Path || process.env.PATH || ""}`;
-      }
-      resolve({ ok: true, added });
+      resolve({ ok: true, added, processPathUpdated: true });
     });
   });
 }
@@ -407,7 +380,7 @@ async function installCli(opts = {}, onProgress = () => {}) {
   const platform = platformTriple();
   if (!platform) {
     throw new Error(
-      "Cài CLI trong app hiện hỗ trợ Windows. Dùng: curl -fsSL https://x.ai/cli/install.sh | bash"
+      "Nền tảng này chưa hỗ trợ cài CLI trong app. Dùng: curl -fsSL https://x.ai/cli/install.sh | bash"
     );
   }
 
@@ -462,14 +435,22 @@ async function installCli(opts = {}, onProgress = () => {}) {
     );
   }
 
-  const fileName = `grok-${version}-${platform}.exe`;
-  const destTmp = path.join(downloadDir, `grok-${platform}.exe`);
+  // Windows artifacts use .exe suffix; macOS/Linux often ship extensionless binaries.
+  const isWin = process.platform === "win32";
+  const artifactSuffix = isWin ? ".exe" : "";
+  const fileName = `grok-${version}-${platform}${artifactSuffix}`;
+  const destTmp = path.join(downloadDir, `grok-${platform}${artifactSuffix || ".bin"}`);
   // Prefer resolved base, then alternate CDN (x.ai ↔ GCS)
   const bases = [baseUrl, baseUrl === BASE_PRIMARY ? BASE_FALLBACK : BASE_PRIMARY];
   const urls = [];
   for (const b of bases) {
     const artifactBase = `${b}/grok-${version}-${platform}`;
-    urls.push(`${artifactBase}.exe`, artifactBase);
+    if (isWin) {
+      urls.push(`${artifactBase}.exe`, artifactBase);
+    } else {
+      // Prefer bare binary first (install.sh style), then .exe fallback
+      urls.push(artifactBase, `${artifactBase}.exe`);
+    }
   }
 
   emit({
@@ -522,20 +503,30 @@ async function installCli(opts = {}, onProgress = () => {}) {
     totalLabel: formatBytes(downloaded.total),
   });
 
-  const grokDest = path.join(binDir, "grok.exe");
-  const agentDest = path.join(binDir, "agent.exe");
+  const grokDest = path.join(binDir, defaultGrokBinaryName());
+  const agentDest = path.join(binDir, defaultAgentBinaryName());
   installBinaryLockedSafe(destTmp, grokDest);
   try {
     installBinaryLockedSafe(destTmp, agentDest);
   } catch {
-    /* agent.exe optional if locked */
+    /* agent binary optional if locked */
+  }
+  // Ensure Unix binaries are executable
+  if (!isWin) {
+    try {
+      fs.chmodSync(grokDest, 0o755);
+      if (fs.existsSync(agentDest)) fs.chmodSync(agentDest, 0o755);
+    } catch {
+      /* ignore */
+    }
   }
 
   const pathResult = await ensureUserPath(binDir);
 
   // Best-effort completions (hidden, no terminal window)
   try {
-    spawn(grokDest, ["completions", "powershell"], {
+    const completionShell = isWin ? "powershell" : "zsh";
+    spawn(grokDest, ["completions", completionShell], {
       windowsHide: true,
       stdio: "ignore",
       detached: true,

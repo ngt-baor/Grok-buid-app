@@ -427,10 +427,16 @@ async function authStatus() {
  * Prefers settings path, then default install, then bare `grok` on PATH.
  */
 function resolveGrokBinary(grokPath) {
+  try {
+    const { resolveGrokBinary: resolve } = require("./platform/paths.cjs");
+    return resolve(grokPath);
+  } catch {
+    /* fallback if platform helper missing */
+  }
   const candidates = [
     grokPath,
-    path.join(os.homedir(), ".grok", "bin", "grok.exe"),
     path.join(os.homedir(), ".grok", "bin", "grok"),
+    path.join(os.homedir(), ".grok", "bin", "grok.exe"),
   ].filter(Boolean);
 
   for (const c of candidates) {
@@ -641,7 +647,16 @@ function cancelDeviceLogin() {
  */
 function startLoginCli(grokPath) {
   const bin = resolveGrokBinary(grokPath);
-  if (bin !== "grok" && !fs.existsSync(bin)) {
+  const binOk =
+    bin === "grok" ||
+    (() => {
+      try {
+        return fs.existsSync(bin) && fs.statSync(bin).isFile();
+      } catch {
+        return false;
+      }
+    })();
+  if (!binOk) {
     return {
       ok: false,
       mode: "cli",
@@ -674,8 +689,19 @@ function startLoginCli(grokPath) {
       );
       child.unref();
     } else if (process.platform === "darwin") {
-      const escaped = String(bin).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-      const script = `tell application "Terminal" to do script "\\"${escaped}\\" login"`;
+      // Open Terminal.app and run login with absolute binary path.
+      const binEsc = String(bin)
+        .replace(/\\/g, "\\\\")
+        .replace(/"/g, '\\"')
+        .replace(/\$/g, "\\$");
+      const shellCmd = `"${binEsc}" login; echo ""; echo "Login xong — quay lại Grok Build và bấm Làm mới."`;
+      const asCmd = shellCmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      const script = [
+        'tell application "Terminal"',
+        "  activate",
+        `  do script "${asCmd}"`,
+        "end tell",
+      ].join("\n");
       const child = spawn("osascript", ["-e", script], {
         detached: true,
         stdio: "ignore",

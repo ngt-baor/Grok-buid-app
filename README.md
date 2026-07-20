@@ -1,9 +1,9 @@
 # Grok Build
 
-Grok Build is a Windows desktop app for working with Grok CLI in project-based workspaces. It provides a focused UI for project chat, local workspace context, usage tracking, settings, skills, and GitHub Releases updates.
+Grok Build is a desktop app for working with Grok CLI in project-based workspaces. It provides a focused UI for project chat, local workspace context, usage tracking, settings, skills, and GitHub Releases updates.
 
 - Current version: `0.1.8`
-- Platform: Windows x64
+- Platforms: **Windows x64** · **macOS Apple Silicon (arm64)** (packaging ready; sign/notarize optional)
 - Runtime: Electron + React + Vite
 
 ## Project Overview
@@ -11,6 +11,8 @@ Grok Build is a Windows desktop app for working with Grok CLI in project-based w
 Grok Build wraps the local Grok CLI with a desktop interface designed for coding and project workflows. The app keeps sessions per project, displays useful project state, supports bundled skills, and can check/download new releases from GitHub.
 
 The app does not bundle user login tokens. Authentication and CLI data stay on the local machine.
+
+**One version, one GitHub Release** ships installers for both Windows and macOS when available. The in-app updater picks the asset that matches the current OS/arch.
 
 ## Key Features
 
@@ -25,73 +27,113 @@ The app does not bundle user login tokens. Authentication and CLI data stay on t
 - Usage panel for weekly SuperGrok quota, billing credits, and token logs.
 - Settings for theme, language, approval mode, external terminal, and optional Chrome DevTools MCP.
 - Skills library loaded from the project and from packaged app resources.
-- GitHub Releases updater for Setup-based app updates.
+- GitHub Releases updater (Windows Setup `.exe` · macOS `.dmg` / `.zip`).
 
 ## Requirements
 
-- Windows 10/11 x64.
+- **Windows** 10/11 x64, or **macOS** 12+ (Apple Silicon recommended).
 - Node.js and npm for development.
-- Grok CLI for runtime usage. The app can install/update it from the UI.
+- Grok CLI for runtime usage. The app can install/update it from the UI (or use the official install script).
 - xAI account login for authenticated Grok CLI usage.
 
 ## Getting Started
 
 Clone and install dependencies:
 
-```powershell
+```bash
 git clone https://github.com/ngt-baor/Grok-buid-app.git
 cd Grok-buid-app
 npm install
 ```
 
+If Electron fails to install its binary (common with restricted npm script policies), re-run:
+
+```bash
+cd node_modules/electron && node install.js
+# or reinstall electron with scripts enabled
+```
+
+Default Grok CLI path:
+
+| OS | Path |
+|----|------|
+| Windows | `%USERPROFILE%\.grok\bin\grok.exe` |
+| macOS / Linux | `~/.grok/bin/grok` |
+
 Run in development mode:
 
-```powershell
+```bash
 npm run dev
 ```
 
 Run the production UI locally:
 
-```powershell
+```bash
 npm run build
 npm run start
 ```
 
 ## Build and Release
 
-Build the Windows installer and portable package:
+### Windows (on a Windows machine or CI runner)
 
-```powershell
+```bash
 npm run dist:win
 ```
 
-Validate release files:
+### macOS (on a Mac)
 
-```powershell
-npm run release:checklist
+```bash
+npm run dist:mac
 ```
 
-Run packaged-app smoke test:
+Produces (example for `0.1.8`):
 
-```powershell
+- `release/Grok-Build-0.1.8-arm64.dmg`
+- `release/Grok-Build-0.1.8-arm64.zip`
+
+Unsigned builds: first open may need **Right-click → Open** (Gatekeeper). Code signing + notarization are optional (Apple Developer account).
+
+### Validate release files
+
+```bash
+npm run release:checklist          # both platforms
+npm run release:checklist -- win   # Windows only
+npm run release:checklist -- mac   # macOS only
+```
+
+### Packaged smoke test
+
+```bash
 npm run smoke:ui
 ```
 
-GitHub Release assets for each version:
+### GitHub Release assets (same tag for both OS)
+
+**Windows**
 
 - `Grok-Build-Setup-<version>.exe`
 - `Grok-Build-Setup-<version>.exe.blockmap`
 - `Grok-Build-Portable-<version>.exe`
 - `latest.yml`
 
-Do not upload `release/win-unpacked/`, debug YAML files, local logs, environment files, or machine-specific configuration.
+**macOS**
+
+- `Grok-Build-<version>-arm64.dmg`
+- `Grok-Build-<version>-arm64.zip`
+- `latest-mac.yml` (optional)
+
+Do **not** upload `release/win-unpacked/`, `release/mac-arm64/`, debug YAML files, local logs, environment files, or machine-specific configuration.
+
+Release process notes: [docs/MACOS-PORT-TASKS.md](./docs/MACOS-PORT-TASKS.md) · dual-platform release keeps **one** semver tag (e.g. `v0.1.9`) with all assets attached.
 
 ## Project Structure
 
 ```text
-assets/      App icons and build resources.
-docs/        Project notes and troubleshooting documents.
-electron/    Electron main process, preload bridge, updater, auth, CLI, sessions, Git, and skills logic.
+assets/      App icons and build resources (icon.ico, icon.icns).
+docs/        Project notes, macOS port tasks, troubleshooting.
+electron/    Electron main process, preload, platform helpers, updater, auth, CLI, sessions, Git, skills.
+electron/platform/  Cross-platform paths + terminal launchers.
 public/      Static files copied into the Vite build.
 scripts/     Build, release, smoke-test, icon, and maintenance scripts.
 skills/      Project skill library bundled into the packaged app.
@@ -102,25 +144,26 @@ dist/        Vite production output.
 
 ## Local Data
 
-Common local paths:
-
-```text
-%APPDATA%\grok-build-app\settings.json          App settings
-%APPDATA%\grok-build-app\project-sessions\      Project chat sessions
-~\.grok\auth.json                                xAI/Grok CLI authentication token
-~\.grok\bin\grok.exe                             Grok CLI binary
-```
+| OS | App settings / sessions | Grok CLI auth | Grok binary |
+|----|-------------------------|---------------|-------------|
+| Windows | `%APPDATA%\grok-build-app\` | `~\.grok\auth.json` | `~\.grok\bin\grok.exe` |
+| macOS | `~/Library/Application Support/grok-build-app/` | `~/.grok/auth.json` | `~/.grok/bin/grok` |
 
 Keep `.env`, auth files, logs, build output, installer files, and machine-local configuration out of Git.
 
 ## Useful Scripts
 
-```powershell
+```bash
 npm run dev                Start Vite + Electron for development
 npm run build              Type-check and build renderer output
 npm run start              Run the production UI locally
 npm run dist:win           Build Windows Setup and Portable packages
+npm run dist:mac           Build macOS DMG and zip (on Mac)
 npm run smoke:ui           Smoke-test packaged app via CDP
 npm run release:checklist  Check release assets before upload
-npm run fix:idb-bloat      Clean oversized local IndexedDB data
+npm run fix:idb-bloat      Clean oversized local IndexedDB data (Windows PowerShell helper)
 ```
+
+## macOS port status
+
+See [docs/MACOS-PORT-TASKS.md](./docs/MACOS-PORT-TASKS.md) for the phased checklist (paths, terminal, packaging, updater, signing).
