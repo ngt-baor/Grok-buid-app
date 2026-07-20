@@ -738,7 +738,11 @@ declare global {
         mcpSummary?: string;
       }>;
       stopAgent: () => Promise<{ ok: boolean }>;
-      newSession: (cwd?: string) => Promise<{ sessionId: string }>;
+      newSession: (cwd?: string) => Promise<{
+        sessionId: string;
+        mcpServers?: string[];
+        mcpSummary?: string;
+      }>;
       previewMcpServers: () => Promise<McpPreview>;
       sendPrompt: (
         payload:

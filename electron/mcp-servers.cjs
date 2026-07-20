@@ -2,9 +2,15 @@
  * Build ACP `mcpServers` list from app settings.
  * Spec: https://agentclientprotocol.com/protocol/v1/session-setup
  * Chrome DevTools MCP: https://github.com/ChromeDevTools/chrome-devtools-mcp
+ *
+ * IMPORTANT: MCP is bound only at ACP `session/new`. Existing sessions never
+ * pick up config changes — user must New Chat / restart agent after toggle.
  */
 
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 
 /**
  * @typedef {object} McpEnvVar
@@ -21,9 +27,59 @@ const path = require("node:path");
  */
 
 /**
+ * Absolute path to a binary on PATH (or known install locations).
+ * @param {string} name
+ * @returns {string | null}
+ */
+function resolveBinary(name) {
+  const candidates = [];
+  if (process.platform === "darwin") {
+    candidates.push(
+      `/opt/homebrew/bin/${name}`,
+      `/usr/local/bin/${name}`,
+      path.join(os.homedir(), ".local", "bin", name)
+    );
+  } else if (process.platform === "win32") {
+    // leave to where / cmd
+  } else {
+    candidates.push(`/usr/local/bin/${name}`, `/usr/bin/${name}`);
+  }
+  for (const p of candidates) {
+    try {
+      if (p && fs.existsSync(p)) return p;
+    } catch {
+      /* next */
+    }
+  }
+  try {
+    if (process.platform === "win32") {
+      const out = execFileSync("where.exe", [name], {
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 4000,
+      });
+      const line = String(out)
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .find((s) => s);
+      return line || null;
+    }
+    const out = execFileSync("which", [name], {
+      encoding: "utf8",
+      timeout: 4000,
+      env: { ...process.env, PATH: buildMcpPathEnv() },
+    });
+    const line = String(out).trim().split(/\r?\n/)[0];
+    return line || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Resolve npx launcher for the current OS.
- * On Windows, `npx` alone is often a .cmd shim that stdio MCP spawn cannot exec —
- * use `cmd /c npx ...` like official chrome-devtools-mcp Windows notes.
+ * Prefer absolute npx path so packaged apps / agent child can exec without shell PATH.
+ * On Windows, `npx` alone is often a .cmd shim — use `cmd /c npx ...`.
  * @returns {{ command: string, prefixArgs: string[] }}
  */
 function npxLauncher() {
@@ -33,7 +89,8 @@ function npxLauncher() {
       prefixArgs: ["/d", "/s", "/c", "npx"],
     };
   }
-  return { command: "npx", prefixArgs: [] };
+  const abs = resolveBinary("npx");
+  return { command: abs || "npx", prefixArgs: [] };
 }
 
 /**
@@ -88,6 +145,15 @@ function buildChromeDevtoolsMcp(settings = {}) {
   if (settings.chromeDevtoolsMcpNoUsageStats !== false) {
     env.push({ name: "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS", value: "1" });
   }
+
+  // Ensure node/npx are findable when app is launched from Dock/Finder (minimal PATH).
+  const pathKey = process.platform === "win32" ? "Path" : "PATH";
+  const pathValue = buildMcpPathEnv();
+  if (pathValue) {
+    env.push({ name: pathKey, value: pathValue });
+    if (pathKey === "Path") env.push({ name: "PATH", value: pathValue });
+  }
+
   // Windows MCP servers often need SystemRoot / ProgramFiles for child processes
   if (process.platform === "win32") {
     if (process.env.SystemRoot) {
@@ -99,10 +165,6 @@ function buildChromeDevtoolsMcp(settings = {}) {
     if (process.env.ProgramFiles) {
       env.push({ name: "ProgramFiles", value: process.env.ProgramFiles });
     }
-    // Ensure PATH is inherited for node/npx discovery when env is overridden by agent
-    if (process.env.PATH) {
-      env.push({ name: "PATH", value: process.env.PATH });
-    }
   }
 
   return {
@@ -111,6 +173,45 @@ function buildChromeDevtoolsMcp(settings = {}) {
     args,
     env,
   };
+}
+
+/**
+ * PATH for MCP child (npx / node / chrome) and for the Grok agent process.
+ * Packaged Electron apps often inherit a stripped PATH on macOS.
+ */
+function buildMcpPathEnv() {
+  const sep = process.platform === "win32" ? ";" : ":";
+  const extras =
+    process.platform === "darwin"
+      ? [
+          "/opt/homebrew/bin",
+          "/usr/local/bin",
+          "/usr/bin",
+          "/bin",
+          path.join(os.homedir(), ".local", "bin"),
+          path.join(os.homedir(), ".nvm", "current", "bin"),
+        ]
+      : process.platform === "win32"
+        ? []
+        : ["/usr/local/bin", "/usr/bin", "/bin"];
+
+  const cur = process.env.PATH || process.env.Path || "";
+  const parts = [...extras, ...cur.split(sep).filter(Boolean)];
+  return [...new Set(parts)].join(sep);
+}
+
+/**
+ * Env overlay for spawning `grok agent` so it can launch MCP (npx/node).
+ * @returns {NodeJS.ProcessEnv}
+ */
+function agentProcessEnv() {
+  const env = { ...process.env };
+  const pathVal = buildMcpPathEnv();
+  if (pathVal) {
+    env.PATH = pathVal;
+    if (process.platform === "win32") env.Path = pathVal;
+  }
+  return env;
 }
 
 /**
@@ -151,4 +252,7 @@ module.exports = {
   mcpServerNames,
   describeMcpServers,
   npxLauncher,
+  buildMcpPathEnv,
+  agentProcessEnv,
+  resolveBinary,
 };

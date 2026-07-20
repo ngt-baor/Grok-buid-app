@@ -145,9 +145,18 @@ class AcpBridge extends EventEmitter {
 
     this.emit("status", { state: "starting", args, cwd: this.cwd, grokPath: this.grokPath });
 
+    // Enriched PATH so agent can spawn npx/node for MCP (esp. packaged Mac apps).
+    let spawnEnv = { ...process.env };
+    try {
+      const { agentProcessEnv } = require("./mcp-servers.cjs");
+      spawnEnv = agentProcessEnv();
+    } catch {
+      /* keep process.env */
+    }
+
     this.proc = spawn(this.grokPath, args, {
       cwd: this.cwd || undefined,
-      env: { ...process.env },
+      env: spawnEnv,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });

@@ -1211,8 +1211,16 @@ function registerIpc() {
 
   ipcMain.handle("agent:new-session", async (_e, cwd) => {
     if (!bridge) throw new Error("Agent chưa start");
+    // MCP list is fixed at session/new — refresh from latest settings every new chat.
+    const settings = loadSettings();
+    const mcpServers = buildMcpServers(settings);
+    bridge.setMcpServers(mcpServers);
     const sessionId = await bridge.newSession(cwd || activeProject);
-    return { sessionId };
+    return {
+      sessionId,
+      mcpServers: mcpServerNames(mcpServers),
+      mcpSummary: describeMcpServers(mcpServers, settings),
+    };
   });
 
   ipcMain.handle("agent:prompt", async (_e, payload) => {

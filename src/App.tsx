@@ -5797,6 +5797,10 @@ export function App() {
           const s = await window.grokApp.newSession(path);
           setSessionId(s.sessionId || "");
           sessionIdRef.current = s.sessionId || "";
+          // MCP inject is per session/new — update badge from refreshed list
+          if (Array.isArray((s as { mcpServers?: string[] }).mcpServers)) {
+            setActiveMcpServers((s as { mcpServers?: string[] }).mcpServers || []);
+          }
         } catch {
           await startAgent();
         }
@@ -11800,8 +11804,15 @@ export function App() {
                         (settings?.chromeDevtoolsMcpPackage || "") !==
                           (next.chromeDevtoolsMcpPackage || "");
                       if (agentReady && mcpChanged) {
-                        // MCP is bound at session/new — restart so inject takes effect
+                        // MCP is bound at session/new only — must restart agent + new session
                         await startAgent();
+                        pushLocal({
+                          id: uid(),
+                          kind: "system",
+                          text: next.chromeDevtoolsMcp
+                            ? "Đã bật Chrome DevTools MCP. Agent đã restart — dùng chat MỚI (không dùng session cũ). Lần đầu có thể tải package qua npx."
+                            : "Đã tắt Chrome DevTools MCP. Agent đã restart; session mới sẽ không inject MCP.",
+                        });
                       }
                     }}
                   >
